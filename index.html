@@ -1,0 +1,2653 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>化學教學互動白板與PDF標註系統</title>
+    <!-- Tailwind CSS for modern responsive UI -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- PDF.js for rendering PDFs client-side -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            overflow: hidden;
+            touch-action: none; /* Prevents default panning/zooming on mobile/iPad */
+            user-select: none;
+        }
+        /* Grid pattern background */
+        .grid-background {
+            background-size: 40px 40px;
+            background-image: 
+                linear-gradient(to right, rgba(200, 200, 200, 0.2) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(200, 200, 200, 0.2) 1px, transparent 1px);
+            background-color: #fcfcfc;
+        }
+        /* Style scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+        .cursor-grab { cursor: grab; }
+        .cursor-grabbing { cursor: grabbing; }
+    </style>
+</head>
+<body class="bg-slate-100 h-screen w-screen flex flex-col relative select-none">
+
+    <!-- TOP CONTROL BAR: Class Selector & Tabs -->
+    <header class="bg-white border-b border-slate-200 h-16 px-4 flex items-center justify-between z-10 shrink-0 shadow-sm">
+        <div class="flex items-center space-x-4">
+            <!-- Logo / Title -->
+            <div class="flex items-center space-x-2 text-indigo-600 font-bold text-lg">
+                <i data-lucide="beaker"></i>
+                <span class="hidden md:inline">化學教學白板</span>
+            </div>
+            
+            <!-- Class Manager Dropdown & Settings -->
+            <div class="flex items-center space-x-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
+                <select id="class-select" class="bg-transparent font-medium text-slate-700 text-sm py-1 px-2 focus:outline-none cursor-pointer">
+                    <!-- Dynamic classes -->
+                </select>
+                <button id="add-class-btn" title="新增班級" class="p-1 hover:bg-slate-200 rounded text-slate-600 transition">
+                    <i data-lucide="plus" class="w-4 h-4"></i>
+                </button>
+                <button id="edit-class-btn" title="管理班級" class="p-1 hover:bg-slate-200 rounded text-slate-600 transition">
+                    <i data-lucide="settings" class="w-4 h-4"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Document / Workspace Tabs -->
+        <div class="flex-1 max-w-2xl mx-4 overflow-x-auto flex space-x-2 py-1 items-center justify-start" id="tab-container" style="scrollbar-width: none;">
+            <!-- Dynamic Tabs go here -->
+        </div>
+
+        <!-- Right Side Actions: Save/Export/New Page -->
+        <div class="flex items-center space-x-2">
+            <!-- PDF並排方格紙開關 (僅在選取PDF分頁時顯示) -->
+            <button id="toggle-side-grid-btn" class="hidden flex items-center space-x-1 bg-violet-50 hover:bg-violet-100 text-violet-600 px-3 py-1.5 rounded-lg text-xs font-semibold transition border border-violet-100">
+                <i data-lucide="columns" class="w-3.5 h-3.5"></i>
+                <span id="toggle-side-grid-text">並排方格筆記</span>
+            </button>
+            
+            <button id="new-grid-tab-btn" class="flex items-center space-x-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 px-3 py-1.5 rounded-lg text-xs font-semibold transition border border-indigo-100">
+                <i data-lucide="grid" class="w-3.5 h-3.5"></i>
+                <span>新增方格紙</span>
+            </button>
+            <button id="import-pdf-btn" class="flex items-center space-x-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 px-3 py-1.5 rounded-lg text-xs font-semibold transition border border-emerald-100">
+                <i data-lucide="file-text" class="w-3.5 h-3.5"></i>
+                <span>匯入 PDF</span>
+            </button>
+            <button id="export-png-btn" title="匯出成圖片傳給學生" class="flex items-center space-x-1 bg-orange-50 hover:bg-orange-100 text-orange-600 px-3 py-1.5 rounded-lg text-xs font-semibold transition border border-orange-100">
+                <i data-lucide="download" class="w-3.5 h-3.5"></i>
+                <span>匯出 PNG</span>
+            </button>
+            <input type="file" id="pdf-file-input" accept="application/pdf" class="hidden">
+        </div>
+    </header>
+
+    <!-- MAIN INTERACTIVE CANVAS CONTAINER -->
+    <main class="flex-1 w-full relative overflow-hidden bg-slate-200" id="canvas-container">
+        <!-- Floating Prompt/Instruction Banner -->
+        <div id="interaction-banner" class="absolute top-4 left-1/2 -translate-x-1/2 bg-indigo-600 text-white text-xs font-semibold px-4 py-2.5 rounded-full shadow-lg z-20 hidden flex items-center space-x-2 transition-all">
+            <i data-lucide="info" class="w-4 h-4"></i>
+            <span id="interaction-banner-text">提示訊息</span>
+        </div>
+
+        <!-- Workspace (Supports zoom & pan) -->
+        <div id="workspace" class="absolute origin-top-left touch-none select-none" style="transform: translate(0px, 0px) scale(1); width: 1600px; height: 1200px;">
+            <!-- Dynamic board background -->
+            <div id="board-bg" class="absolute inset-0 grid-background shadow-inner"></div>
+            
+            <!-- PDF Render layer -->
+            <canvas id="pdf-canvas" class="absolute top-0 left-0 shadow-lg bg-white pointer-events-none hidden"></canvas>
+            
+            <!-- Main Drawing/Interaction Canvas -->
+            <canvas id="drawing-canvas" class="absolute top-0 left-0 bg-transparent cursor-crosshair"></canvas>
+        </div>
+
+        <!-- No Tab Active Screen -->
+        <div id="empty-state" class="absolute inset-0 flex flex-col items-center justify-center bg-slate-50 z-20">
+            <div class="p-8 max-w-md text-center">
+                <div class="w-20 h-20 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <i data-lucide="beaker" class="w-10 h-10"></i>
+                </div>
+                <h3 class="text-xl font-bold text-slate-800 mb-2">歡迎使用化學互動白板</h3>
+                <p class="text-slate-500 text-sm mb-6">請在上方選擇或新增您的班級，並點擊「新增方格紙」或「匯入 PDF」來開始上課。所有進度將為各班級自動保存！</p>
+                <div class="flex flex-col space-y-3">
+                    <div class="flex justify-center space-x-4">
+                        <button onclick="document.getElementById('new-grid-tab-btn').click()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition shadow-sm">
+                            建立方格紙白板
+                        </button>
+                        <button onclick="document.getElementById('import-pdf-btn').click()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition shadow-sm">
+                            上傳課堂 PDF 講義
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dynamic Page Indicator (for PDF) -->
+        <div id="page-indicator" class="absolute bottom-4 left-4 bg-white/90 backdrop-blur border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 shadow-sm flex items-center space-x-2 z-10 hidden">
+            <button id="prev-page-btn" class="hover:bg-slate-100 p-1 rounded"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
+            <span id="page-num-text">頁碼: 1 / 1</span>
+            <button id="next-page-btn" class="hover:bg-slate-100 p-1 rounded"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
+        </div>
+
+        <!-- Zoom Reset Level Float Indicator -->
+        <div class="absolute bottom-4 right-4 bg-white/90 backdrop-blur border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 shadow-sm flex items-center space-x-2 z-10">
+            <button id="zoom-out-float" class="p-1 hover:bg-slate-100 rounded" title="縮小"><i data-lucide="zoom-out" class="w-4 h-4"></i></button>
+            <span id="zoom-percent">100%</span>
+            <button id="zoom-in-float" class="p-1 hover:bg-slate-100 rounded" title="放大"><i data-lucide="zoom-in" class="w-4 h-4"></i></button>
+            <button id="zoom-reset-float" class="p-1 hover:bg-slate-100 rounded text-indigo-600 border border-indigo-100" title="重置畫面"><i data-lucide="maximize" class="w-4 h-4"></i></button>
+        </div>
+    </main>
+
+    <!-- FLOATING COMPACT TOOLBAR (Draggable & Collapsible) -->
+    <div id="floating-toolbar" class="absolute top-24 left-6 bg-white border border-slate-200 rounded-2xl shadow-xl z-30 transition-all flex flex-col p-2 select-none" style="width: auto;">
+        <!-- Header / Drag Bar -->
+        <div id="toolbar-drag-handle" class="h-6 flex items-center justify-between px-2 mb-1 cursor-grab active:cursor-grabbing border-b border-slate-100">
+            <div class="flex space-x-1">
+                <span class="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
+                <span class="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
+                <span class="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
+            </div>
+            <button id="toolbar-collapse-btn" class="text-slate-400 hover:text-slate-600 transition">
+                <i data-lucide="chevrons-left" class="w-3.5 h-3.5" id="collapse-icon"></i>
+            </button>
+        </div>
+
+        <!-- Toolbar Content Area -->
+        <div id="toolbar-content" class="flex items-center space-x-2">
+            <!-- Basic Goodnotes-like Toolbar -->
+            <div class="flex items-center border-r border-slate-150 pr-2 space-x-1">
+                <!-- Move/Hand Tool -->
+                <button id="tool-hand" class="tool-btn p-2 rounded-xl text-indigo-600 bg-indigo-50 transition" title="平移畫布/手勢拖移">
+                    <i data-lucide="hand" class="w-5 h-5"></i>
+                </button>
+                <!-- Pen Tool -->
+                <button id="tool-pen" class="tool-btn p-2 rounded-xl text-slate-600 hover:bg-slate-100 transition" title="鋼筆工具">
+                    <i data-lucide="pen" class="w-5 h-5"></i>
+                </button>
+                <!-- Highlighter Tool -->
+                <button id="tool-highlighter" class="tool-btn p-2 rounded-xl text-slate-600 hover:bg-slate-100 transition" title="螢光筆(高透明，長按可自動校正為直線)">
+                    <i data-lucide="highlighter" class="w-5 h-5"></i>
+                </button>
+                <!-- Eraser Tool -->
+                <button id="tool-eraser" class="tool-btn p-2 rounded-xl text-slate-600 hover:bg-slate-100 transition" title="橡皮擦 (僅擦除劃過的部分筆跡)">
+                    <i data-lucide="eraser" class="w-5 h-5"></i>
+                </button>
+                <!-- Lasso Tool -->
+                <button id="tool-lasso" class="tool-btn p-2 rounded-xl text-slate-600 hover:bg-slate-100 transition" title="套索工具 (選取/移動/旋轉/縮放/複製)">
+                    <i data-lucide="lasso" class="w-5 h-5"></i>
+                </button>
+                <!-- Paste Tool -->
+                <button id="tool-paste" class="p-2 rounded-xl text-slate-600 hover:bg-slate-100 transition" title="貼上 (可在畫布指定位置點擊貼上)">
+                    <i data-lucide="clipboard" class="w-5 h-5"></i>
+                </button>
+                <!-- Crop/Screenshot Tool -->
+                <button id="tool-crop" class="tool-btn p-2 rounded-xl text-slate-600 hover:bg-slate-100 transition" title="剪取擷圖 (複製圈選範圍)">
+                    <i data-lucide="crop" class="w-5 h-5"></i>
+                </button>
+                <!-- Image Input Selector -->
+                <button id="tool-image" class="p-2 rounded-xl text-slate-600 hover:bg-slate-100 transition" title="插入本機圖片">
+                    <i data-lucide="image" class="w-5 h-5"></i>
+                </button>
+                <input type="file" id="image-file-input" accept="image/*" class="hidden">
+            </div>
+
+            <!-- Brush properties (Pen Size & Color) -->
+            <div id="brush-properties" class="flex items-center space-x-2 border-r border-slate-150 pr-2">
+                <!-- Colors (8 standard classroom colors, including Slate/Gray) -->
+                <div class="grid grid-cols-4 gap-1">
+                    <button class="color-dot w-5 h-5 rounded-full border border-slate-300 bg-black cursor-pointer ring-2 ring-indigo-500 ring-offset-1" data-color="#000000"></button>
+                    <button class="color-dot w-5 h-5 rounded-full border border-slate-300 bg-blue-600 cursor-pointer" data-color="#2563eb"></button>
+                    <button class="color-dot w-5 h-5 rounded-full border border-slate-300 bg-red-600 cursor-pointer" data-color="#dc2626"></button>
+                    <button class="color-dot w-5 h-5 rounded-full border border-slate-300 bg-green-600 cursor-pointer" data-color="#16a34a"></button>
+                    <button class="color-dot w-5 h-5 rounded-full border border-slate-300 bg-yellow-400 cursor-pointer" data-color="#facc15"></button>
+                    <button class="color-dot w-5 h-5 rounded-full border border-slate-300 bg-orange-500 cursor-pointer" data-color="#f97316"></button>
+                    <button class="color-dot w-5 h-5 rounded-full border border-slate-300 bg-purple-600 cursor-pointer" data-color="#9333ea"></button>
+                    <button class="color-dot w-5 h-5 rounded-full border border-slate-300 bg-slate-500 cursor-pointer" data-color="#64748b" title="灰色"></button>
+                </div>
+                <!-- Size Slider -->
+                <div class="flex flex-col space-y-1">
+                    <span class="text-[10px] text-slate-400 font-semibold text-center" id="size-label">粗細: 3</span>
+                    <input type="range" id="brush-size" min="1" max="40" value="3" class="w-16 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer">
+                </div>
+            </div>
+
+            <!-- ChemDraw Chemical Structure Stamp Palette (Removed bond stamps) -->
+            <div class="flex items-center space-x-1">
+                <span class="text-[10px] text-slate-400 font-bold uppercase tracking-wider writing-mode-vertical border-r border-slate-150 pr-1.5 mr-1 py-1">結構印章</span>
+                <div class="flex items-center space-x-1 bg-indigo-50/70 p-1 rounded-xl border border-indigo-100">
+                    <button class="stamp-btn p-1.5 rounded-lg hover:bg-white text-indigo-700 transition flex items-center justify-center" data-stamp="cyclopentane" title="環戊烷 (按住拖拉可調整環半徑與角度)">
+                        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="12,3 21,9.5 17.5,20 6.5,20 3,9.5" />
+                        </svg>
+                    </button>
+                    <button class="stamp-btn p-1.5 rounded-lg hover:bg-white text-indigo-700 transition flex items-center justify-center" data-stamp="cyclohexane" title="環己烷 (按住拖拉可調整環半徑與角度)">
+                        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="12,2 20.6,7 20.6,17 12,22 3.4,17 3.4,7" />
+                        </svg>
+                    </button>
+                    <button class="stamp-btn p-1.5 rounded-lg hover:bg-white text-indigo-700 transition flex items-center justify-center" data-stamp="benzene" title="凱庫勒苯環 (Kekulé) (按住拖拉可調整環半徑與角度)">
+                        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="12,2 20.6,7 20.6,17 12,22 3.4,17 3.4,7" />
+                            <line x1="12" y1="5" x2="18.5" y2="8.8" stroke-width="1.5"/>
+                            <line x1="19" y1="16" x2="13" y2="19.5" stroke-width="1.5"/>
+                            <line x1="5.1" y1="16" x2="5.1" y2="8.5" stroke-width="1.5"/>
+                        </svg>
+                    </button>
+                    <!-- Chair Conformation -->
+                    <button class="stamp-btn p-1.5 rounded-lg hover:bg-white text-indigo-700 transition flex items-center justify-center" data-stamp="chair" title="六碳環椅型 (Chair Conformation) (按住拖拉可調整大小與角度)">
+                        <svg class="w-6 h-5" viewBox="0 0 32 20" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="2,16 10,4 20,4 30,12 22,16 12,16" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Undo & Clear Actions -->
+            <div class="flex items-center pl-2 border-l border-slate-150 space-x-1">
+                <!-- Undo Button -->
+                <button id="tool-undo" class="p-2 rounded-xl hover:bg-indigo-50 text-indigo-600 transition" title="復原上一步 (Undo)">
+                    <i data-lucide="undo"></i>
+                </button>
+                <!-- Clear Button -->
+                <button id="clear-page-btn" class="p-2 rounded-xl hover:bg-red-50 text-red-600 transition" title="清空當前頁面標註與物件">
+                    <i data-lucide="trash-2" class="w-5 h-5"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- LASSO FLOATING CONTEXT MENU -->
+    <div id="lasso-menu" class="absolute hidden bg-white border border-slate-200 shadow-lg rounded-xl p-1 z-40 flex items-center space-x-1">
+        <button id="lasso-copy" class="px-2.5 py-1.5 hover:bg-slate-100 rounded-lg text-xs font-semibold text-slate-700 flex items-center space-x-1">
+            <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+            <span>複製</span>
+        </button>
+        <button id="lasso-cut" class="px-2.5 py-1.5 hover:bg-slate-100 rounded-lg text-xs font-semibold text-slate-700 flex items-center space-x-1">
+            <i data-lucide="scissors" class="w-3.5 h-3.5"></i>
+            <span>剪下</span>
+        </button>
+        <button id="lasso-delete" class="px-2.5 py-1.5 hover:bg-red-50 hover:text-red-600 rounded-lg text-xs font-semibold text-slate-600 flex items-center space-x-1">
+            <i data-lucide="trash" class="w-3.5 h-3.5"></i>
+            <span>刪除</span>
+        </button>
+        <button id="lasso-trigger-paste" class="px-2.5 py-1.5 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg text-xs font-semibold text-slate-700 flex items-center space-x-1">
+            <i data-lucide="clipboard" class="w-3.5 h-3.5"></i>
+            <span>貼上</span>
+        </button>
+    </div>
+
+    <!-- LASSO PASTE CONTEXT MENU -->
+    <div id="paste-menu" class="absolute hidden bg-white border border-slate-200 shadow-lg rounded-xl p-1 z-40 flex items-center space-x-1">
+        <button id="lasso-paste" class="px-2.5 py-1.5 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg text-xs font-semibold text-slate-700 flex items-center space-x-1">
+            <i data-lucide="clipboard" class="w-3.5 h-3.5"></i>
+            <span>貼上</span>
+        </button>
+    </div>
+
+    <!-- CLASS SETTINGS MODAL -->
+    <div id="class-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center hidden">
+        <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 m-4">
+            <div class="flex items-center justify-between border-b border-slate-150 pb-4 mb-4">
+                <h3 class="text-lg font-bold text-slate-800 flex items-center space-x-2">
+                    <i data-lucide="graduation-cap" class="text-indigo-600"></i>
+                    <span>管理與新增班級</span>
+                </h3>
+                <button id="close-modal-btn" class="p-1 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-600 transition">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            
+            <div class="space-y-4">
+                <div class="flex items-center space-x-2">
+                    <input type="text" id="new-class-input" placeholder="例如: 高一乙班、化學選修" class="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <button id="modal-add-class-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-4 py-2 rounded-lg text-sm transition">新增</button>
+                </div>
+
+                <div class="bg-slate-50 rounded-xl border border-slate-200 p-2 max-h-60 overflow-y-auto space-y-1" id="class-list-container">
+                    <!-- Dynamic classes list with Delete and Rename options -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SYSTEM ALERTS/NOTIFICATIONS -->
+    <div id="custom-toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg z-50 transition-opacity duration-300 opacity-0 pointer-events-none flex items-center space-x-2">
+        <i data-lucide="info" class="w-4 h-4 text-indigo-400"></i>
+        <span id="toast-message">系統提示</span>
+    </div>
+
+    <!-- SYSTEM IMPLEMENTATION SCRIPT -->
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+
+        // 1. GLOBAL STATE
+        let state = {
+            classes: [
+                { id: 'class-1', name: '高一甲班' },
+                { id: 'class-2', name: '高二選修甲' }
+            ],
+            currentClassId: 'class-1',
+            tabs: {},       // { classId: [ { id, title, type: 'grid'|'pdf', pdfData: base64, currentPage, totalPages, hasSideGrid } ] }
+            currentTabId: {}, // { classId: tabId }
+            drawings: {},    // { classId_tabId_pageNo: [ objects ] } (Includes: strokes, stamps, images)
+            
+            // Interaction Options
+            currentTool: 'hand', // hand, pen, highlighter, eraser, lasso, stamp, crop
+            selectedStamp: null,
+            brushColor: '#000000',
+            
+            // 【優化 5】各自獨立的工具粗細數值記憶系統
+            toolWidths: {
+                pen: 3,          // 預設粗細改為 3
+                highlighter: 15,
+                eraser: 20
+            },
+            brushSize: 3, // 預設粗細改為 3
+
+            // Board transformation (Pan & Zoom)
+            panX: 0,
+            panY: 0,
+            scale: 1,
+
+            // Clipboard
+            clipboard: null,
+            pendingPasteClick: false, // 決定貼上位置模式開關
+
+            // Undo system stack
+            undoStack: {}, // { classId_tabId_pageNo: [ drawingsSnapshot ] }
+            
+            // Track last cursor/touch position for accurate distance calculations
+            lastMousePt: { x: 0, y: 0 }
+        };
+
+        // PDF document cache dictionary to prevent reloading on page flip
+        let loadedPdfDocs = {};
+
+        // Track eraser dragging and straight line hold timer
+        let isErasingHistoryPushed = false;
+        let straightLineTimer = null;
+        let isStraightened = false;
+        let straightenStartPt = null;
+        let lastTimerPt = { x: 0, y: 0 };
+
+        // DOM elements
+        const canvasContainer = document.getElementById('canvas-container');
+        const workspace = document.getElementById('workspace');
+        const drawingCanvas = document.getElementById('drawing-canvas');
+        const ctx = drawingCanvas.getContext('2d');
+        const pdfCanvas = document.getElementById('pdf-canvas');
+        const pdfCtx = pdfCanvas.getContext('2d');
+        const boardBg = document.getElementById('board-bg');
+
+        const classSelect = document.getElementById('class-select');
+        const tabContainer = document.getElementById('tab-container');
+        const emptyState = document.getElementById('empty-state');
+        const pageIndicator = document.getElementById('page-indicator');
+        const pageNumText = document.getElementById('page-num-text');
+        const interactionBanner = document.getElementById('interaction-banner');
+        const interactionBannerText = document.getElementById('interaction-banner-text');
+        const toggleSideGridBtn = document.getElementById('toggle-side-grid-btn');
+        const toggleSideGridText = document.getElementById('toggle-side-grid-text');
+
+        // Floating toolbar elements
+        const floatingToolbar = document.getElementById('floating-toolbar');
+        const dragHandle = document.getElementById('toolbar-drag-handle');
+        const toolbarContent = document.getElementById('toolbar-content');
+        const collapseBtn = document.getElementById('toolbar-collapse-btn');
+        const collapseIcon = document.getElementById('collapse-icon');
+
+        // Context menus
+        const lassoMenu = document.getElementById('lasso-menu');
+        const pasteMenu = document.getElementById('paste-menu');
+
+        // ChemDraw Stamp click-drag drawing state variables
+        let isDrawingStamp = false;
+        let stampStartPt = null;
+        let activePreviewStamp = null;
+
+        // INDEXEDDB DATABASE FOR LOCAL RECOVERY
+        const DB_NAME = 'ChemistryWhiteboardDB_v1';
+        let db;
+
+        function initDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, 1);
+                request.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains('stateStore')) {
+                        db.createObjectStore('stateStore');
+                    }
+                };
+                request.onsuccess = (e) => {
+                    db = e.target.result;
+                    resolve();
+                };
+                request.onerror = (e) => reject(e);
+            });
+        }
+
+        async function saveState() {
+            if (!db) return;
+            try {
+                const transaction = db.transaction(['stateStore'], 'readwrite');
+                const store = transaction.objectStore('stateStore');
+                const data = {
+                    classes: state.classes,
+                    currentClassId: state.currentClassId,
+                    tabs: state.tabs,
+                    currentTabId: state.currentTabId,
+                    drawings: state.drawings
+                };
+                store.put(data, 'system_state');
+            } catch (err) {
+                console.error("Failed to save state to IndexedDB", err);
+            }
+        }
+
+        async function loadState() {
+            if (!db) return;
+            return new Promise((resolve) => {
+                const transaction = db.transaction(['stateStore'], 'readonly');
+                const store = transaction.objectStore('stateStore');
+                const request = store.get('system_state');
+                request.onsuccess = (e) => {
+                    if (e.target.result) {
+                        const val = e.target.result;
+                        state.classes = val.classes || state.classes;
+                        state.currentClassId = val.currentClassId || state.currentClassId;
+                        state.tabs = val.tabs || {};
+                        state.currentTabId = val.currentTabId || {};
+                        state.drawings = val.drawings || {};
+                    }
+                    resolve();
+                };
+                request.onerror = () => resolve();
+            });
+        }
+
+        // UNDO MECHANISM SNAPS
+        function pushUndoState() {
+            const classId = state.currentClassId;
+            const activeTabId = state.currentTabId[classId];
+            if (!activeTabId) return;
+            const activeTab = state.tabs[classId].find(t => t.id === activeTabId);
+            const key = `${classId}_${activeTabId}_${activeTab.currentPage}`;
+
+            if (!state.undoStack) state.undoStack = {};
+            if (!state.undoStack[key]) state.undoStack[key] = [];
+
+            // Push clone of drawings to undo stack
+            const snapshot = JSON.parse(JSON.stringify(state.drawings[key] || []));
+            state.undoStack[key].push(snapshot);
+
+            // Limit to max 25 undos
+            if (state.undoStack[key].length > 25) {
+                state.undoStack[key].shift();
+            }
+        }
+
+        function triggerUndo() {
+            const classId = state.currentClassId;
+            const activeTabId = state.currentTabId[classId];
+            if (!activeTabId) return;
+            const activeTab = state.tabs[classId].find(t => t.id === activeTabId);
+            const key = `${classId}_${activeTabId}_${activeTab.currentPage}`;
+
+            if (state.undoStack && state.undoStack[key] && state.undoStack[key].length > 0) {
+                const previousSnapshot = state.undoStack[key].pop();
+                state.drawings[key] = previousSnapshot;
+                selectedLassoObjects = []; // Deselect active lasso items
+                saveState();
+                redrawWorkspace();
+                showToast("已復原上一步");
+            } else {
+                showToast("已經是最新步驟，無法再復原！");
+            }
+        }
+
+        // TOAST NOTIFICATIONS (No browser alerts)
+        function showToast(message) {
+            const toast = document.getElementById('custom-toast');
+            document.getElementById('toast-message').textContent = message;
+            toast.style.opacity = '1';
+            setTimeout(() => {
+                toast.style.opacity = '0';
+            }, 2500);
+        }
+
+        // 2D Rotation & Translation Helper
+        function rotateAndTranslate(px, py, cx, cy, angle) {
+            const cos = Math.cos(angle);
+            const sin = Math.sin(angle);
+            return {
+                x: cx + px * cos - py * sin,
+                y: cy + px * sin + py * cos
+            };
+        }
+
+        // High Density Point Interpolation for Vector Stamps (avoids gaps in Pixel Eraser detection)
+        function generateSegmentPoints(p1, p2) {
+            const points = [];
+            const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+            // Generate a point every 3 pixels along the chemical bond line
+            const steps = Math.max(2, Math.floor(dist / 3));
+            for (let i = 0; i <= steps; i++) {
+                const t = i / steps;
+                points.push({
+                    x: p1.x + (p2.x - p1.x) * t,
+                    y: p1.y + (p2.y - p1.y) * t
+                });
+            }
+            return points;
+        }
+
+        // Vectorize/Deconstruct Stamp elements into high density independent Stroke Segments (Strokes)
+        function convertStampToStrokes(stamp) {
+            const size = stamp.scaleSize || 70;
+            const cx = stamp.x;
+            const cy = stamp.y;
+            const angle = stamp.angle || 0;
+            const color = stamp.color;
+            // 修正：線段寬度直接與筆刷設定 (stamp.size) 保持 1:1 一致，不再除以 3
+            const strokeSize = stamp.size; 
+            const strokes = [];
+
+            function addSegment(px1, py1, px2, py2) {
+                const p1 = rotateAndTranslate(px1, py1, cx, cy, angle);
+                const p2 = rotateAndTranslate(px2, py2, cx, cy, angle);
+                const pts = generateSegmentPoints(p1, p2);
+                strokes.push({
+                    id: 'stroke-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
+                    type: 'stroke',
+                    tool: 'pen', // Shares normal pen class to support pixel-level eraser automatically!
+                    color: color,
+                    size: strokeSize,
+                    points: pts
+                });
+            }
+
+            switch (stamp.name) {
+                case 'single_bond':
+                    addSegment(-size / 2, 0, size / 2, 0);
+                    break;
+                case 'double_bond':
+                    addSegment(-size / 2, -3, size / 2, -3);
+                    addSegment(-size / 2, 3, size / 2, 3);
+                    break;
+                case 'triple_bond':
+                    addSegment(-size / 2, -5, size / 2, -5);
+                    addSegment(-size / 2, 0, size / 2, 0);
+                    addSegment(-size / 2, 5, size / 2, 5);
+                    break;
+                case 'cyclopentane': {
+                    const numSides = 5;
+                    const r = size / 2;
+                    const pts = [];
+                    for (let i = 0; i < numSides; i++) {
+                        const a = (i * 2 * Math.PI / numSides) - Math.PI / 2;
+                        pts.push({ x: r * Math.cos(a), y: r * Math.sin(a) });
+                    }
+                    for (let i = 0; i < numSides; i++) {
+                        const next = (i + 1) % numSides;
+                        addSegment(pts[i].x, pts[i].y, pts[next].x, pts[next].y);
+                    }
+                    break;
+                }
+                case 'cyclohexane': {
+                    const numSides = 6;
+                    const r = size / 2;
+                    const pts = [];
+                    for (let i = 0; i < numSides; i++) {
+                        const a = (i * 2 * Math.PI / numSides) - Math.PI / 2;
+                        pts.push({ x: r * Math.cos(a), y: r * Math.sin(a) });
+                    }
+                    for (let i = 0; i < numSides; i++) {
+                        const next = (i + 1) % numSides;
+                        addSegment(pts[i].x, pts[i].y, pts[next].x, pts[next].y);
+                    }
+                    break;
+                }
+                case 'benzene': {
+                    const numSides = 6;
+                    const r = size / 2;
+                    const pts = [];
+                    for (let i = 0; i < numSides; i++) {
+                        const a = (i * 2 * Math.PI / numSides) - Math.PI / 2;
+                        pts.push({ x: r * Math.cos(a), y: r * Math.sin(a) });
+                    }
+                    // Outer Hexagon
+                    for (let i = 0; i < numSides; i++) {
+                        const next = (i + 1) % numSides;
+                        addSegment(pts[i].x, pts[i].y, pts[next].x, pts[next].y);
+                    }
+                    // Inner Conjugated Double Bonds (等比例縮放防重疊修正 - 調整為 0.70 避開重疊)
+                    const innerR = r * 0.70;
+                    for (let i = 0; i < 3; i++) {
+                        const a1 = (i * 2 * 2 * Math.PI / 6) - Math.PI / 2 + 0.15;
+                        const a2 = ((i * 2 + 1) * 2 * Math.PI / 6) - Math.PI / 2 - 0.15;
+                        addSegment(innerR * Math.cos(a1), innerR * Math.sin(a1), innerR * Math.cos(a2), innerR * Math.sin(a2));
+                    }
+                    break;
+                }
+                case 'chair': {
+                    const w = size * 1.1;
+                    const h = size * 0.75;
+                    const pts = [
+                        {x: -w/2, y: h/2},
+                        {x: -w/2 + w*0.3, y: -h/2},
+                        {x: -w/2 + w*0.6, y: -h/2 + h*0.25},
+                        {x: w/2, y: -h/2 + h*0.1},
+                        {x: w/2 - w*0.2, y: h/2},
+                        {x: -w/2 + w*0.4, y: h/2 - h*0.25}
+                    ];
+                    for (let i = 0; i < 6; i++) {
+                        const next = (i + 1) % 6;
+                        addSegment(pts[i].x, pts[i].y, pts[next].x, pts[next].y);
+                    }
+                    break;
+                }
+            }
+            return strokes;
+        }
+
+        // INITIALIZATION
+        window.addEventListener('load', async () => {
+            lucide.createIcons();
+            try {
+                await initDB();
+                await loadState();
+            } catch (err) {
+                console.warn("IndexedDB not available, reverting to session variables.");
+            }
+
+            resizeCanvas();
+            renderClassSelect();
+            switchClass(state.currentClassId);
+            setupInteractions();
+            setupToolbarDragging();
+            setupPdfLoading();
+            setupImageLoading();
+            setupClassModal();
+            setupLassoInteractions();
+            setupSideGridInteractions();
+
+            // Undo Button Binding
+            document.getElementById('tool-undo').addEventListener('click', triggerUndo);
+
+            // Default position for floating toolbar
+            floatingToolbar.style.top = '80px';
+            floatingToolbar.style.left = '24px';
+        });
+
+        function resizeCanvas() {
+            const activeClassId = state.currentClassId;
+            const activeTabId = state.currentTabId[activeClassId];
+            const tabs = state.tabs[activeClassId] || [];
+            const activeTab = tabs.find(t => t.id === activeTabId);
+
+            let width = 1600;
+            let height = 1200; // Landscape default
+
+            if (activeTab && activeTab.type === 'pdf') {
+                // Will be dynamically set in renderPdfPage
+                return;
+            }
+
+            workspace.style.width = width + 'px';
+            workspace.style.height = height + 'px';
+
+            drawingCanvas.width = width;
+            drawingCanvas.height = height;
+            pdfCanvas.width = width;
+            pdfCanvas.height = height;
+
+            redrawWorkspace();
+        }
+
+        // CLASS AND TAB VIEWS
+        function renderClassSelect() {
+            classSelect.innerHTML = '';
+            state.classes.forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = c.id;
+                opt.textContent = c.name;
+                classSelect.appendChild(opt);
+            });
+            classSelect.value = state.currentClassId;
+        }
+
+        function switchClass(classId) {
+            state.currentClassId = classId;
+            if (!state.tabs[classId]) state.tabs[classId] = [];
+            if (!state.currentTabId[classId]) {
+                state.currentTabId[classId] = state.tabs[classId].length > 0 ? state.tabs[classId][0].id : null;
+            }
+            renderTabs();
+            saveState();
+        }
+
+        classSelect.addEventListener('change', (e) => {
+            switchClass(e.target.value);
+        });
+
+        function renderTabs() {
+            tabContainer.innerHTML = '';
+            const activeClassId = state.currentClassId;
+            const classTabs = state.tabs[activeClassId] || [];
+            const activeTabId = state.currentTabId[activeClassId];
+
+            if (classTabs.length === 0) {
+                emptyState.classList.remove('hidden');
+                pageIndicator.classList.add('hidden');
+                workspace.classList.add('hidden');
+                toggleSideGridBtn.classList.add('hidden');
+                hideInteractionBanner();
+                saveState();
+                return;
+            }
+
+            emptyState.classList.add('hidden');
+            workspace.classList.remove('hidden');
+
+            classTabs.forEach(tab => {
+                const isActive = tab.id === activeTabId;
+                const tabEl = document.createElement('div');
+                tabEl.className = `flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-all duration-150 shrink-0 ${
+                    isActive ? 'bg-indigo-600 text-white shadow-md' : 'bg-white hover:bg-slate-50 text-slate-600 border border-slate-200'
+                }`;
+
+                const icon = document.createElement('i');
+                icon.className = 'w-3.5 h-3.5';
+                icon.setAttribute('data-lucide', tab.type === 'pdf' ? 'file-text' : 'grid');
+                tabEl.appendChild(icon);
+
+                const span = document.createElement('span');
+                span.textContent = tab.title;
+                tabEl.appendChild(span);
+
+                const closeBtn = document.createElement('button');
+                closeBtn.className = `p-0.5 rounded-full hover:bg-black/10 transition-colors ml-1 ${isActive ? 'text-indigo-100 hover:text-white' : 'text-slate-400 hover:text-slate-600'}`;
+                closeBtn.innerHTML = `<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+                closeBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    closeTab(activeClassId, tab.id);
+                });
+                tabEl.appendChild(closeBtn);
+
+                tabEl.addEventListener('click', () => {
+                    selectTab(activeClassId, tab.id);
+                });
+
+                tabContainer.appendChild(tabEl);
+            });
+
+            lucide.createIcons();
+            loadActiveTabContent();
+        }
+
+        function selectTab(classId, tabId) {
+            state.currentTabId[classId] = tabId;
+            renderTabs();
+        }
+
+        function closeTab(classId, tabId) {
+            const tabs = state.tabs[classId] || [];
+            const idx = tabs.findIndex(t => t.id === tabId);
+            if (idx === -1) return;
+
+            // Delete drawings of all pages of this tab
+            const tab = tabs[idx];
+            for (let i = 1; i <= tab.totalPages; i++) {
+                delete state.drawings[`${classId}_${tabId}_${i}`];
+            }
+
+            // Remove from PDF cache if closed
+            delete loadedPdfDocs[tabId];
+
+            tabs.splice(idx, 1);
+            if (state.currentTabId[classId] === tabId) {
+                state.currentTabId[classId] = tabs.length > 0 ? tabs[0].id : null;
+            }
+            renderTabs();
+        }
+
+        // CREATING GRID PAPER TABS
+        document.getElementById('new-grid-tab-btn').addEventListener('click', () => {
+            const classId = state.currentClassId;
+            if (!state.tabs[classId]) state.tabs[classId] = [];
+
+            const gridCount = state.tabs[classId].filter(t => t.type === 'grid').length + 1;
+            const newTab = {
+                id: 'tab-grid-' + Date.now(),
+                title: `方格紙 ${gridCount}`,
+                type: 'grid',
+                currentPage: 1,
+                totalPages: 1,
+                hasSideGrid: false
+            };
+
+            state.tabs[classId].push(newTab);
+            state.currentTabId[classId] = newTab.id;
+            renderTabs();
+        });
+
+        // WORKSPACE REDRAW ENGINE
+        let activePdfDoc = null; // Holds PDFJS document instance
+
+        async function loadActiveTabContent() {
+            const classId = state.currentClassId;
+            const activeTabId = state.currentTabId[classId];
+            if (!activeTabId) return;
+
+            const tabs = state.tabs[classId] || [];
+            const activeTab = tabs.find(t => t.id === activeTabId);
+            if (!activeTab) return;
+
+            // Handle Top Control Bar 'Side-by-side Toggle Button' Visibility
+            if (activeTab.type === 'pdf') {
+                toggleSideGridBtn.classList.remove('hidden');
+                const hasSideGrid = activeTab.hasSideGrid || false;
+                toggleSideGridText.textContent = hasSideGrid ? "關閉並排方格" : "並排方格筆記";
+                
+                pageIndicator.classList.remove('hidden');
+                pageNumText.textContent = `頁碼: ${activeTab.currentPage} / ${activeTab.totalPages}`;
+                pdfCanvas.classList.remove('hidden');
+
+                // Render current PDF page with Instant 快取 Mechanism
+                try {
+                    const pdfData = activeTab.pdfData;
+                    if (loadedPdfDocs[activeTab.id]) {
+                        activePdfDoc = loadedPdfDocs[activeTab.id];
+                        renderPdfPage(activeTab.currentPage);
+                    } else {
+                        // Load and cache
+                        const loadingTask = pdfjsLib.getDocument({ data: atob(pdfData.split(',')[1]) });
+                        activePdfDoc = await loadingTask.promise;
+                        loadedPdfDocs[activeTab.id] = activePdfDoc;
+                        renderPdfPage(activeTab.currentPage);
+                    }
+                } catch (err) {
+                    console.error("Error loading PDF", err);
+                    showToast("PDF 載入出錯！");
+                }
+            } else {
+                hideSideGridButton(); // helper clean
+                pageIndicator.classList.add('hidden');
+                pdfCanvas.classList.add('hidden');
+                boardBg.classList.remove('hidden');
+                boardBg.style.left = '0px';
+                boardBg.style.width = '100%';
+                boardBg.style.borderLeft = 'none';
+                activePdfDoc = null;
+
+                // Standard grid size
+                resizeCanvas();
+            }
+
+            redrawWorkspace();
+        }
+
+        function hideSideGridButton() {
+            toggleSideGridBtn.classList.add('hidden');
+        }
+
+        async function renderPdfPage(pageNum) {
+            if (!activePdfDoc) return;
+            const page = await activePdfDoc.getPage(pageNum);
+            const viewport = page.getViewport({ scale: 2.0 }); // High resolution render
+
+            const classId = state.currentClassId;
+            const activeTabId = state.currentTabId[classId];
+            const activeTab = state.tabs[classId].find(t => t.id === activeTabId);
+            
+            const hasSideGrid = activeTab && activeTab.hasSideGrid;
+            const sideGridWidth = 800; // Optimal note-writing width next to PDF
+
+            // Determine final workspace width based on side-by-side status
+            const totalWidth = hasSideGrid ? (viewport.width + sideGridWidth) : viewport.width;
+
+            workspace.style.width = totalWidth + 'px';
+            workspace.style.height = viewport.height + 'px';
+            
+            drawingCanvas.width = totalWidth;
+            drawingCanvas.height = viewport.height;
+            pdfCanvas.width = viewport.width;
+            pdfCanvas.height = viewport.height;
+
+            // Handle side-by-side grid split visual rendering
+            if (hasSideGrid) {
+                boardBg.classList.remove('hidden');
+                boardBg.style.left = viewport.width + 'px';
+                boardBg.style.width = sideGridWidth + 'px';
+                boardBg.style.borderLeft = '3px solid #cbd5e1';
+            } else {
+                boardBg.classList.add('hidden');
+                boardBg.style.left = '0px';
+                boardBg.style.width = '100%';
+                boardBg.style.borderLeft = 'none';
+            }
+
+            const renderContext = {
+                canvasContext: pdfCtx,
+                viewport: viewport
+            };
+            await page.render(renderContext).promise;
+            redrawWorkspace();
+        }
+
+        // SIDE-BY-SIDE GRID PAPER INTERACTION MANAGER
+        function setupSideGridInteractions() {
+            toggleSideGridBtn.addEventListener('click', () => {
+                const classId = state.currentClassId;
+                const activeTabId = state.currentTabId[classId];
+                if (!activeTabId) return;
+                
+                const activeTab = state.tabs[classId].find(t => t.id === activeTabId);
+                if (activeTab && activeTab.type === 'pdf') {
+                    pushUndoState();
+                    activeTab.hasSideGrid = !activeTab.hasSideGrid;
+                    saveState();
+                    loadActiveTabContent();
+                    showToast(activeTab.hasSideGrid ? "已開啟右側並排方格對照區！您現在可以一邊看講義一邊寫筆記。" : "並排方格紙已關閉。");
+                }
+            });
+        }
+
+        // REDRAWING ALL OBJECTS ON CANVAS (Strokes, Stamps, Images)
+        function redrawWorkspace() {
+            ctx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+
+            const classId = state.currentClassId;
+            const activeTabId = state.currentTabId[classId];
+            if (!activeTabId) return;
+
+            const tabs = state.tabs[classId] || [];
+            const activeTab = tabs.find(t => t.id === activeTabId);
+            if (!activeTab) return;
+
+            const key = `${classId}_${activeTabId}_${activeTab.currentPage}`;
+            const objects = state.drawings[key] || [];
+
+            // 1. Draw Drawings/Objects
+            objects.forEach(obj => {
+                if (obj.type === 'stroke') {
+                    drawStroke(obj);
+                } else if (obj.type === 'stamp') {
+                    drawChemicalStamp(obj);
+                } else if (obj.type === 'image') {
+                    drawImageObject(obj);
+                }
+            });
+
+            // 2. Draw ChemDraw Dynamic Preview Stamp (while dragging)
+            if (isDrawingStamp && activePreviewStamp) {
+                drawChemicalStamp(activePreviewStamp);
+            }
+
+            // 3. Draw Crop Selection Box (when in crop tool dragging)
+            if (state.currentTool === 'crop' && isCropping && cropStartPt && cropCurrentPt) {
+                ctx.save();
+                ctx.strokeStyle = '#4f46e5';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([6, 4]);
+                
+                const left = Math.min(cropStartPt.x, cropCurrentPt.x);
+                const top = Math.min(cropStartPt.y, cropCurrentPt.y);
+                const width = Math.abs(cropStartPt.x - cropCurrentPt.x);
+                const height = Math.abs(cropStartPt.y - cropCurrentPt.y);
+                
+                // Dim outer area
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+                ctx.fillRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+                ctx.clearRect(left, top, width, height);
+                
+                ctx.strokeRect(left, top, width, height);
+                ctx.restore();
+            }
+
+            // 4. Draw Lasso Selection Boundary & Active Polygon
+            if (state.currentTool === 'lasso' && lassoActive && lassoPolygon.length > 1) {
+                ctx.save();
+                ctx.strokeStyle = '#6366f1';
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(lassoPolygon[0].x, lassoPolygon[0].y);
+                for (let i = 1; i < lassoPolygon.length; i++) {
+                    ctx.lineTo(lassoPolygon[i].x, lassoPolygon[i].y);
+                }
+                ctx.closePath();
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            // 5. Draw Transform Bounding Box around Selected Lasso Objects
+            if (state.currentTool === 'lasso' && selectedLassoObjects.length > 0) {
+                const cb = getCollectiveBoundingBox(selectedLassoObjects);
+                if (cb) {
+                    ctx.save();
+                    ctx.strokeStyle = '#4f46e5';
+                    ctx.lineWidth = 1.5;
+                    ctx.setLineDash([4, 4]);
+                    ctx.strokeRect(cb.minX - 6, cb.minY - 6, cb.maxX - cb.minX + 12, cb.maxY - cb.minY + 12);
+
+                    // Draw Scale Handle at Bottom-Right Corner
+                    ctx.fillStyle = '#ffffff';
+                    ctx.strokeStyle = '#4f46e5';
+                    ctx.lineWidth = 2.5;
+                    ctx.setLineDash([]);
+                    ctx.beginPath();
+                    ctx.arc(cb.maxX + 6, cb.maxY + 6, 7, 0, 2*Math.PI);
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // Draw Rotate Handle at Top-Middle (connected by 20px vertical line)
+                    const midX = (cb.minX + cb.maxX) / 2;
+                    ctx.beginPath();
+                    ctx.moveTo(midX, cb.minY - 6);
+                    ctx.lineTo(midX, cb.minY - 24);
+                    ctx.stroke();
+
+                    ctx.beginPath();
+                    ctx.arc(midX, cb.minY - 24, 7, 0, 2*Math.PI);
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            }
+        }
+
+        // Updated draw helper functions to support rendering onto optional target contexts (avoids rendering Crop overlay boxes)
+        function drawStroke(stroke, targetCtx = ctx) {
+            if (stroke.points.length === 0) return;
+            targetCtx.save();
+            targetCtx.lineJoin = 'round';
+            targetCtx.lineCap = 'round';
+            targetCtx.strokeStyle = stroke.color;
+            targetCtx.lineWidth = stroke.size;
+
+            if (stroke.tool === 'highlighter') {
+                targetCtx.globalAlpha = 0.35;
+                targetCtx.globalCompositeOperation = 'multiply';
+            } else {
+                targetCtx.globalAlpha = 1.0;
+                targetCtx.globalCompositeOperation = 'source-over';
+            }
+
+            targetCtx.beginPath();
+            targetCtx.moveTo(stroke.points[0].x, stroke.points[0].y);
+            for (let i = 1; i < stroke.points.length; i++) {
+                targetCtx.lineTo(stroke.points[i].x, stroke.points[i].y);
+            }
+            targetCtx.stroke();
+            targetCtx.restore();
+        }
+
+        function drawChemicalStamp(stamp, targetCtx = ctx) {
+            targetCtx.save();
+            targetCtx.strokeStyle = stamp.color;
+            // 修正：線條寬度直接等於筆刷大小 (stamp.size)，與鋼筆粗細一致，不再除以 3
+            targetCtx.lineWidth = stamp.size; 
+            targetCtx.lineJoin = 'round';
+            targetCtx.lineCap = 'round';
+            targetCtx.globalAlpha = 1.0;
+            targetCtx.globalCompositeOperation = 'source-over';
+
+            const size = stamp.scaleSize || 70; // Standard stamp size is 70px
+
+            // Rotated transformations
+            targetCtx.translate(stamp.x, stamp.y);
+            if (stamp.angle) {
+                targetCtx.rotate(stamp.angle);
+            }
+
+            targetCtx.beginPath();
+            switch (stamp.name) {
+                case 'single_bond':
+                    targetCtx.moveTo(-size / 2, 0);
+                    targetCtx.lineTo(size / 2, 0);
+                    break;
+                case 'double_bond':
+                    targetCtx.moveTo(-size / 2, -3);
+                    targetCtx.lineTo(size / 2, -3);
+                    targetCtx.moveTo(-size / 2, 3);
+                    targetCtx.lineTo(size / 2, 3);
+                    break;
+                case 'triple_bond':
+                    targetCtx.moveTo(-size / 2, -5);
+                    targetCtx.lineTo(size / 2, -5);
+                    targetCtx.moveTo(-size / 2, 0);
+                    targetCtx.lineTo(size / 2, 0);
+                    targetCtx.moveTo(-size / 2, 5);
+                    targetCtx.lineTo(size / 2, 5);
+                    break;
+                case 'cyclopentane':
+                    for (let i = 0; i < 5; i++) {
+                        const angle = (i * 2 * Math.PI / 5) - Math.PI / 2;
+                        const px = (size / 2) * Math.cos(angle);
+                        const py = (size / 2) * Math.sin(angle);
+                        if (i === 0) targetCtx.moveTo(px, py);
+                        else targetCtx.lineTo(px, py);
+                    }
+                    targetCtx.closePath();
+                    break;
+                case 'cyclohexane':
+                    for (let i = 0; i < 6; i++) {
+                        const angle = (i * 2 * Math.PI / 6) - Math.PI / 2;
+                        const px = (size / 2) * Math.cos(angle);
+                        const py = (size / 2) * Math.sin(angle);
+                        if (i === 0) targetCtx.moveTo(px, py);
+                        else targetCtx.lineTo(px, py);
+                    }
+                    targetCtx.closePath();
+                    break;
+                case 'benzene':
+                    // Outer Hexagon
+                    const r = size / 2;
+                    for (let i = 0; i < 6; i++) {
+                        const angle = (i * 2 * Math.PI / 6) - Math.PI / 2;
+                        const px = r * Math.cos(angle);
+                        const py = r * Math.sin(angle);
+                        if (i === 0) targetCtx.moveTo(px, py);
+                        else targetCtx.lineTo(px, py);
+                    }
+                    targetCtx.closePath();
+                    targetCtx.stroke();
+
+                    // Inner double bonds (等比例縮放防重疊修正 - 調整為 0.70 避開重疊)
+                    targetCtx.beginPath();
+                    const innerR = r * 0.70;
+                    for (let i = 0; i < 3; i++) {
+                        const a1 = (i * 2 * 2 * Math.PI / 6) - Math.PI / 2 + 0.15;
+                        const a2 = ((i * 2 + 1) * 2 * Math.PI / 6) - Math.PI / 2 - 0.15;
+                        targetCtx.moveTo(innerR * Math.cos(a1), innerR * Math.sin(a1));
+                        targetCtx.lineTo(innerR * Math.cos(a2), innerR * Math.sin(a2));
+                    }
+                    break;
+                case 'chair':
+                    const w = size * 1.1;
+                    const h = size * 0.75;
+                    const pts = [
+                        {x: -w/2, y: h/2},                    // V1 (Left bottom)
+                        {x: -w/2 + w*0.3, y: -h/2},            // V2 (Left top-ish)
+                        {x: -w/2 + w*0.6, y: -h/2 + h*0.25},   // V3 (Mid top)
+                        {x: w/2, y: -h/2 + h*0.1},            // V4 (Right top)
+                        {x: w/2 - w*0.2, y: h/2},            // V5 (Right bottom)
+                        {x: -w/2 + w*0.4, y: h/2 - h*0.25}    // V6 (Mid bottom)
+                    ];
+                    targetCtx.moveTo(pts[0].x, pts[0].y);
+                    for(let i=1; i<pts.length; i++) {
+                        targetCtx.lineTo(pts[i].x, pts[i].y);
+                    }
+                    targetCtx.closePath();
+                    break;
+            }
+            targetCtx.stroke();
+            targetCtx.restore();
+        }
+
+        const imgElementCache = {};
+        function drawImageObject(obj, targetCtx = ctx) {
+            targetCtx.save();
+            targetCtx.globalAlpha = 1.0;
+            targetCtx.globalCompositeOperation = 'source-over';
+
+            const drawRotatedImage = (img) => {
+                targetCtx.translate(obj.x + obj.width / 2, obj.y + obj.height / 2);
+                if (obj.angle) {
+                    targetCtx.rotate(obj.angle);
+                }
+                targetCtx.drawImage(img, -obj.width / 2, -obj.height / 2, obj.width, obj.height);
+            };
+
+            if (imgElementCache[obj.id]) {
+                drawRotatedImage(imgElementCache[obj.id]);
+            } else {
+                const img = new Image();
+                img.src = obj.dataUrl;
+                img.onload = () => {
+                    imgElementCache[obj.id] = img;
+                    redrawWorkspace();
+                };
+            }
+            targetCtx.restore();
+        }
+
+        // HELPERS FOR BOUNDING BOX CALCULATION
+        function getObjectBoundingBox(obj) {
+            if (obj.type === 'stroke') {
+                const xs = obj.points.map(p => p.x);
+                const ys = obj.points.map(p => p.y);
+                return {
+                    minX: Math.min(...xs),
+                    minY: Math.min(...ys),
+                    maxX: Math.max(...xs),
+                    maxY: Math.max(...ys)
+                };
+            } else if (obj.type === 'stamp') {
+                const r = (obj.scaleSize || 70) / 2; // Initial stamp dimension is 70px
+                return {
+                    minX: obj.x - r,
+                    minY: obj.y - r,
+                    maxX: obj.x + r,
+                    maxY: obj.y + r
+                };
+            } else if (obj.type === 'image') {
+                return {
+                    minX: obj.x,
+                    minY: obj.y,
+                    maxX: obj.x + obj.width,
+                    maxY: obj.y + obj.height
+                };
+            }
+            return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+        }
+
+        function getCollectiveBoundingBox(objs) {
+            if (objs.length === 0) return null;
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            objs.forEach(obj => {
+                const b = getObjectBoundingBox(obj);
+                if (b.minX < minX) minX = b.minX;
+                if (b.minY < minY) minY = b.minY;
+                if (b.maxX > maxX) maxX = b.maxX;
+                if (b.maxY > maxY) maxY = b.maxY;
+            });
+            return { minX, minY, maxX, maxY };
+        }
+
+        // PDF PAGE SWITCHING ACTIONS
+        document.getElementById('prev-page-btn').addEventListener('click', () => {
+            const classId = state.currentClassId;
+            const activeTabId = state.currentTabId[classId];
+            const activeTab = state.tabs[classId].find(t => t.id === activeTabId);
+            if (activeTab && activeTab.currentPage > 1) {
+                activeTab.currentPage--;
+                loadActiveTabContent();
+                saveState();
+            }
+        });
+
+        document.getElementById('next-page-btn').addEventListener('click', () => {
+            const classId = state.currentClassId;
+            const activeTabId = state.currentTabId[classId];
+            const activeTab = state.tabs[classId].find(t => t.id === activeTabId);
+            if (activeTab && activeTab.currentPage < activeTab.totalPages) {
+                activeTab.currentPage++;
+                loadActiveTabContent();
+                saveState();
+            }
+        });
+
+        // PEN, HIGHLIGHTER, ERASER, CROP & STAMP INTERACTIONS
+        let isDrawing = false;
+        let activePoints = [];
+        let isCropping = false;
+        let cropStartPt = null;
+        let cropCurrentPt = null;
+
+        function setupInteractions() {
+            // Touch & Mouse Support
+            drawingCanvas.addEventListener('mousedown', startInteract);
+            drawingCanvas.addEventListener('mousemove', dragInteract);
+            drawingCanvas.addEventListener('mouseup', endInteract);
+            drawingCanvas.addEventListener('mouseleave', endInteract);
+
+            drawingCanvas.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 1) {
+                    const t = e.touches[0];
+                    startInteract({ clientX: t.clientX, clientY: t.clientY });
+                } else if (e.touches.length === 2 && state.currentTool === 'hand') {
+                    startTouchPanZoom(e);
+                }
+            }, { passive: false });
+
+            drawingCanvas.addEventListener('touchmove', (e) => {
+                if (e.touches.length === 1) {
+                    e.preventDefault();
+                    const t = e.touches[0];
+                    dragInteract({ clientX: t.clientX, clientY: t.clientY });
+                } else if (e.touches.length === 2 && state.currentTool === 'hand') {
+                    e.preventDefault();
+                    dragTouchPanZoom(e);
+                }
+            }, { passive: false });
+
+            drawingCanvas.addEventListener('touchend', () => {
+                endInteract();
+                endTouchPanZoom();
+            });
+
+            // Hand panning fallback via dragging with mouse
+            canvasContainer.addEventListener('mousedown', (e) => {
+                if (state.currentTool === 'hand' && e.button === 0) {
+                    isPanning = true;
+                    startX = e.clientX - state.panX;
+                    startY = e.clientY - state.panY;
+                    canvasContainer.classList.remove('cursor-grab');
+                    canvasContainer.classList.add('cursor-grabbing');
+                }
+            });
+
+            canvasContainer.addEventListener('mousemove', (e) => {
+                if (isPanning) {
+                    state.panX = e.clientX - startX;
+                    state.panY = e.clientY - startY;
+                    updateTransform();
+                }
+            });
+
+            canvasContainer.addEventListener('mouseup', () => {
+                isPanning = false;
+                canvasContainer.classList.remove('cursor-grabbing');
+                if (state.currentTool === 'hand') canvasContainer.classList.add('cursor-grab');
+            });
+
+            // Color Selector Listener
+            document.querySelectorAll('.color-dot').forEach(dot => {
+                dot.addEventListener('click', (e) => {
+                    document.querySelectorAll('.color-dot').forEach(d => d.classList.remove('ring-2', 'ring-indigo-500', 'ring-offset-1'));
+                    e.target.classList.add('ring-2', 'ring-indigo-500', 'ring-offset-1');
+                    state.brushColor = e.target.getAttribute('data-color');
+                });
+            });
+
+            // Brush Size Slider (獨立更新各工具粗細數值)
+            const sizeSlider = document.getElementById('brush-size');
+            sizeSlider.addEventListener('input', (e) => {
+                const val = parseInt(e.target.value);
+                state.brushSize = val;
+                document.getElementById('size-label').textContent = `粗細: ${val}`;
+                if (state.currentTool === 'pen') {
+                    state.toolWidths.pen = val;
+                } else if (state.currentTool === 'highlighter') {
+                    state.toolWidths.highlighter = val;
+                } else if (state.currentTool === 'eraser') {
+                    state.toolWidths.eraser = val;
+                }
+            });
+
+            setupToolButtons();
+        }
+
+        let isPanning = false;
+        let startX = 0, startY = 0;
+
+        function startInteract(e) {
+            const pt = getCanvasCoords(e);
+            state.lastMousePt = pt; // Store last known position
+            const classId = state.currentClassId;
+            const activeTabId = state.currentTabId[classId];
+            if (!activeTabId) return;
+
+            // 優先攔截：如果當前正處於「指定點擊貼上模式」，點選任意處立刻在該處貼上
+            if (state.pendingPasteClick) {
+                executeDesignatedPaste(pt);
+                return;
+            }
+
+            if (state.currentTool === 'pen' || state.currentTool === 'highlighter') {
+                isDrawing = true;
+                activePoints = [pt];
+                
+                // 鋼筆與螢光筆智慧長按拉直校正初始化
+                isStraightened = false;
+                straightenStartPt = pt;
+                lastTimerPt = pt;
+                clearTimeout(straightLineTimer);
+                // 550毫秒無位移判定為長按
+                straightLineTimer = setTimeout(() => {
+                    isStraightened = true;
+                    activePoints = [straightenStartPt, state.lastMousePt];
+                    redrawWorkspace();
+                    showToast("已自動校正為直線");
+                }, 550);
+            } else if (state.currentTool === 'eraser') {
+                isErasingHistoryPushed = false; // Reset eraser snapshot push check
+                eraseAtPoint(pt);
+            } else if (state.currentTool === 'stamp') {
+                // ChemDraw Style Drag-to-Draw initialization
+                isDrawingStamp = true;
+                stampStartPt = pt;
+                activePreviewStamp = {
+                    type: 'stamp',
+                    name: state.selectedStamp,
+                    x: pt.x,
+                    y: pt.y,
+                    size: state.brushSize,
+                    scaleSize: 70, // 70 px initial stamp size
+                    angle: 0,
+                    color: state.brushColor
+                };
+                redrawWorkspace();
+            } else if (state.currentTool === 'lasso') {
+                startLasso(pt, e);
+            } else if (state.currentTool === 'crop') {
+                isCropping = true;
+                cropStartPt = pt;
+                cropCurrentPt = pt;
+                redrawWorkspace();
+            }
+        }
+
+        function dragInteract(e) {
+            const pt = getCanvasCoords(e);
+            state.lastMousePt = pt; // Store last known position
+            
+            if (isDrawing && (state.currentTool === 'pen' || state.currentTool === 'highlighter')) {
+                // 處理智慧長按拉直（鋼筆與螢光筆皆適用）
+                if (isStraightened) {
+                    // 已經校正為直線，起點不變，終點跟隨滑鼠/筆尖
+                    activePoints = [straightenStartPt, pt];
+                } else {
+                    activePoints.push(pt);
+                    // 計算移動距離，若移動幅度大於 8px 則重新重設計時器，防止繪圖中途誤判
+                    const moveDist = Math.hypot(pt.x - lastTimerPt.x, pt.y - lastTimerPt.y);
+                    if (moveDist > 8) {
+                        clearTimeout(straightLineTimer);
+                        lastTimerPt = pt;
+                        straightLineTimer = setTimeout(() => {
+                            isStraightened = true;
+                            activePoints = [straightenStartPt, pt];
+                            redrawWorkspace();
+                            showToast("已自動校正為直線");
+                        }, 550);
+                    }
+                }
+
+                // 畫布即時渲染
+                ctx.save();
+                ctx.lineJoin = 'round';
+                ctx.lineCap = 'round';
+                ctx.strokeStyle = state.brushColor;
+                ctx.lineWidth = (state.currentTool === 'pen') ? state.toolWidths.pen : state.toolWidths.highlighter;
+                ctx.globalAlpha = state.currentTool === 'highlighter' ? 0.35 : 1.0;
+                ctx.globalCompositeOperation = state.currentTool === 'highlighter' ? 'multiply' : 'source-over';
+                
+                ctx.beginPath();
+                if (isStraightened) {
+                    ctx.moveTo(straightenStartPt.x, straightenStartPt.y);
+                    ctx.lineTo(pt.x, pt.y);
+                } else {
+                    ctx.moveTo(activePoints[activePoints.length - 2].x, activePoints[activePoints.length - 2].y);
+                    ctx.lineTo(pt.x, pt.y);
+                }
+                ctx.stroke();
+                ctx.restore();
+            } else if (state.currentTool === 'eraser' && e.buttons === 1) {
+                eraseAtPoint(pt);
+            } else if (state.currentTool === 'stamp' && isDrawingStamp && activePreviewStamp) {
+                // ChemDraw dynamic real-time drag calculation
+                const dx = pt.x - stampStartPt.x;
+                const dy = pt.y - stampStartPt.y;
+                const dist = Math.hypot(dx, dy);
+
+                if (['single_bond', 'double_bond', 'triple_bond'].includes(activePreviewStamp.name)) {
+                    // Bonds: Drag point controls length (scaleSize) and 360-degree direction (angle) relative to startPt
+                    activePreviewStamp.x = (stampStartPt.x + pt.x) / 2;
+                    activePreviewStamp.y = (stampStartPt.y + pt.y) / 2;
+                    activePreviewStamp.scaleSize = Math.max(15, dist);
+                    activePreviewStamp.angle = Math.atan2(dy, dx);
+                } else {
+                    // Rings: StartPt is center, drag point controls radius (scaleSize = dist * 2) and rotation angle
+                    activePreviewStamp.x = stampStartPt.x;
+                    activePreviewStamp.y = stampStartPt.y;
+                    activePreviewStamp.scaleSize = Math.max(15, dist * 2);
+                    activePreviewStamp.angle = Math.atan2(dy, dx);
+                }
+                redrawWorkspace();
+            } else if (state.currentTool === 'lasso') {
+                dragLasso(pt, e);
+            } else if (state.currentTool === 'crop' && isCropping) {
+                cropCurrentPt = pt;
+                redrawWorkspace();
+            }
+        }
+
+        function endInteract() {
+            clearTimeout(straightLineTimer); // 清除自動校正計時器
+
+            if (isDrawing) {
+                isDrawing = false;
+                if (activePoints.length > 1) {
+                    pushUndoState(); // Store history
+                    const classId = state.currentClassId;
+                    const activeTabId = state.currentTabId[classId];
+                    const activeTab = state.tabs[classId].find(t => t.id === activeTabId);
+                    const key = `${classId}_${activeTabId}_${activeTab.currentPage}`;
+                    
+                    if (!state.drawings[key]) state.drawings[key] = [];
+                    state.drawings[key].push({
+                        id: 'stroke-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
+                        type: 'stroke',
+                        tool: state.currentTool,
+                        color: state.brushColor,
+                        size: (state.currentTool === 'pen') ? state.toolWidths.pen : state.toolWidths.highlighter,
+                        points: activePoints
+                    });
+                    saveState();
+                }
+                activePoints = [];
+                isStraightened = false;
+                redrawWorkspace();
+            } else if (state.currentTool === 'stamp' && isDrawingStamp) {
+                isDrawingStamp = false;
+                const classId = state.currentClassId;
+                const activeTabId = state.currentTabId[classId];
+                const activeTab = state.tabs[classId].find(t => t.id === activeTabId);
+                const key = `${classId}_${activeTabId}_${activeTab.currentPage}`;
+
+                if (activePreviewStamp) {
+                    const dragDist = Math.hypot(state.lastMousePt.x - stampStartPt.x, state.lastMousePt.y - stampStartPt.y);
+
+                    pushUndoState();
+                    if (!state.drawings[key]) state.drawings[key] = [];
+
+                    let finalStamp;
+                    // If dragging is negligible (e.g. less than 5px drag), create a standard 70px stamp
+                    if (dragDist < 5) {
+                        finalStamp = {
+                            type: 'stamp',
+                            name: state.selectedStamp,
+                            x: stampStartPt.x,
+                            y: stampStartPt.y,
+                            size: state.brushSize,
+                            scaleSize: 70, // 70px stamp dimension as specified
+                            angle: 0,
+                            color: state.brushColor
+                        };
+                    } else {
+                        // Place the dynamically dragged, resized, and rotated stamp exactly as previewed
+                        finalStamp = activePreviewStamp;
+                    }
+
+                    if (finalStamp) {
+                        // Crucial Upgrade: Convert the stamp structure instantly into high-density vector Strokes!
+                        // This allows the Pixel-Eraser and Lasso tools to operate directly on individual chemical bonds/rings.
+                        const strokes = convertStampToStrokes(finalStamp);
+                        strokes.forEach(s => state.drawings[key].push(s));
+                    }
+                    
+                    activePreviewStamp = null;
+                    saveState();
+                }
+                redrawWorkspace();
+            } else if (state.currentTool === 'lasso') {
+                endLasso();
+            } else if (state.currentTool === 'crop' && isCropping) {
+                isCropping = false;
+                executeCropCapture();
+            }
+        }
+
+        // Get actual pointer coords inside the workspace coordinates
+        function getCanvasCoords(e) {
+            const rect = drawingCanvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (drawingCanvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (drawingCanvas.height / rect.height);
+            return { x, y };
+        }
+
+        // GOODNOTES STYLE精細分割橡皮擦 (Pixel-level Segment Eraser)
+        function eraseAtPoint(pt) {
+            const classId = state.currentClassId;
+            const activeTabId = state.currentTabId[classId];
+            const activeTab = state.tabs[classId].find(t => t.id === activeTabId);
+            const key = `${classId}_${activeTabId}_${activeTab.currentPage}`;
+            const objects = state.drawings[key] || [];
+
+            let changed = false;
+            const threshold = state.toolWidths.eraser * 1.5 + 8; // 橡皮擦偵測半徑
+            const remainingObjects = [];
+
+            objects.forEach(obj => {
+                if (obj.type === 'stroke') {
+                    let strokeSegments = [];
+                    let currentSegment = [];
+                    let strokeChanged = false;
+
+                    obj.points.forEach(p => {
+                        const dist = Math.hypot(p.x - pt.x, p.y - pt.y);
+                        // 判斷該點是否在橡皮擦擦除範圍內
+                        if (dist < threshold) {
+                            strokeChanged = true;
+                            // 如果當前累積有筆跡，切斷並保存為獨立線段
+                            if (currentSegment.length > 0) {
+                                strokeSegments.push(currentSegment);
+                                currentSegment = [];
+                            }
+                        } else {
+                            currentSegment.push(p);
+                        }
+                    });
+
+                    if (currentSegment.length > 0) {
+                        strokeSegments.push(currentSegment);
+                    }
+
+                    if (strokeChanged) {
+                        changed = true;
+                        // 將被切開的各個筆記段落，轉換成新的獨立筆跡物件存回
+                        strokeSegments.forEach(segment => {
+                            if (segment.length > 1) { // 向量點數至少大於1點才能繪製
+                                remainingObjects.push({
+                                    id: 'stroke-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
+                                    type: 'stroke',
+                                    tool: obj.tool,
+                                    color: obj.color,
+                                    size: obj.size,
+                                    points: segment
+                                });
+                            }
+                        });
+                    } else {
+                        remainingObjects.push(obj);
+                    }
+                } else if (obj.type === 'stamp') {
+                    // Legacy check (if any old non-vector stamps exist in IndexedDB data)
+                    const dist = Math.hypot(obj.x - pt.x, obj.y - pt.y);
+                    if (dist < threshold + 15) {
+                        changed = true;
+                    } else {
+                        remainingObjects.push(obj);
+                    }
+                } else if (obj.type === 'image') {
+                    if (pt.x >= obj.x && pt.x <= obj.x + obj.width &&
+                        pt.y >= obj.y && pt.y <= obj.y + obj.height) {
+                        changed = true;
+                    } else {
+                        remainingObjects.push(obj);
+                    }
+                }
+            });
+
+            if (changed) {
+                // 為避免拖曳擦除時產生過多零碎的 Undo 記錄，每次拖曳擦除只推送一次 Undo 狀態
+                if (!isErasingHistoryPushed) {
+                    pushUndoState();
+                    isErasingHistoryPushed = true;
+                }
+                state.drawings[key] = remainingObjects;
+                saveState();
+                redrawWorkspace();
+            }
+        }
+
+        // CLEAR AND TRANSFORMATION SYSTEM (ZOOM/PAN)
+        document.getElementById('clear-page-btn').addEventListener('click', () => {
+            const classId = state.currentClassId;
+            const activeTabId = state.currentTabId[classId];
+            if (!activeTabId) return;
+
+            const activeTab = state.tabs[classId].find(t => t.id === activeTabId);
+            const key = `${classId}_${activeTabId}_${activeTab.currentPage}`;
+            
+            pushUndoState();
+            state.drawings[key] = [];
+            selectedLassoObjects = [];
+            saveState();
+            redrawWorkspace();
+            showToast("頁面已清除");
+        });
+
+        function updateTransform() {
+            workspace.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.scale})`;
+            document.getElementById('zoom-percent').textContent = `${Math.round(state.scale * 100)}%`;
+        }
+
+        // Float Zoom Buttons
+        document.getElementById('zoom-in-float').addEventListener('click', () => {
+            state.scale = Math.min(4.0, state.scale + 0.1);
+            updateTransform();
+        });
+
+        document.getElementById('zoom-out-float').addEventListener('click', () => {
+            state.scale = Math.max(0.4, state.scale - 0.1);
+            updateTransform();
+        });
+
+        document.getElementById('zoom-reset-float').addEventListener('click', () => {
+            state.scale = 1.0;
+            state.panX = 0;
+            state.panY = 0;
+            updateTransform();
+            showToast("畫面已重設");
+        });
+
+        // Smart multi-touch iPad Zoom & Pan
+        let lastTouchDist = 0;
+        let lastTouchX = 0;
+        let lastTouchY = 0;
+
+        function startTouchPanZoom(e) {
+            const t1 = e.touches[0];
+            const t2 = e.touches[1];
+            lastTouchDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+            lastTouchX = (t1.clientX + t2.clientX) / 2;
+            lastTouchY = (t1.clientY + t2.clientY) / 2;
+        }
+
+        function dragTouchPanZoom(e) {
+            const t1 = e.touches[0];
+            const t2 = e.touches[1];
+            const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+            const midX = (t1.clientX + t2.clientX) / 2;
+            const midY = (t1.clientY + t2.clientY) / 2;
+
+            state.panX += (midX - lastTouchX);
+            state.panY += (midY - lastTouchY);
+
+            const factor = dist / lastTouchDist;
+            state.scale = Math.max(0.4, Math.min(4.0, state.scale * factor));
+
+            lastTouchDist = dist;
+            lastTouchX = midX;
+            lastTouchY = midY;
+            updateTransform();
+        }
+
+        function endTouchPanZoom() {
+            lastTouchDist = 0;
+        }
+
+        // TOOL SELECTORS FUNCTION
+        function setupToolButtons() {
+            const tools = {
+                'tool-hand': 'hand',
+                'tool-pen': 'pen',
+                'tool-highlighter': 'highlighter',
+                'tool-eraser': 'eraser',
+                'tool-lasso': 'lasso',
+                'tool-crop': 'crop'
+            };
+
+            Object.entries(tools).forEach(([btnId, toolName]) => {
+                document.getElementById(btnId).addEventListener('click', () => {
+                    // Reset selected active stamp visual
+                    document.querySelectorAll('.stamp-btn').forEach(b => b.classList.remove('bg-indigo-600', 'text-white'));
+                    state.selectedStamp = null;
+
+                    setActiveTool(toolName, btnId);
+                });
+            });
+
+            // ChemDraw Stamp click handling
+            document.querySelectorAll('.stamp-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const stampName = btn.getAttribute('data-stamp');
+                    state.selectedStamp = stampName;
+                    
+                    document.querySelectorAll('.stamp-btn').forEach(b => b.classList.remove('bg-indigo-600', 'text-white'));
+                    btn.classList.add('bg-indigo-600', 'text-white');
+
+                    setActiveTool('stamp', null);
+                });
+            });
+        }
+
+        // 獨立切換並更新 Slider 控制器介面
+        function updateSliderUI() {
+            let size = state.brushSize;
+            if (state.currentTool === 'pen') {
+                size = state.toolWidths.pen;
+            } else if (state.currentTool === 'highlighter') {
+                size = state.toolWidths.highlighter;
+            } else if (state.currentTool === 'eraser') {
+                size = state.toolWidths.eraser;
+            }
+            state.brushSize = size;
+            const sizeSlider = document.getElementById('brush-size');
+            if (sizeSlider) {
+                sizeSlider.value = size;
+                document.getElementById('size-label').textContent = `粗細: ${size}`;
+            }
+        }
+
+        function setActiveTool(toolName, btnId) {
+            state.currentTool = toolName;
+            hideInteractionBanner();
+
+            // Highlight tool buttons
+            document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('bg-indigo-50', 'text-indigo-600'));
+            if (btnId) {
+                document.getElementById(btnId).classList.add('bg-indigo-50', 'text-indigo-600');
+            }
+
+            // Adjust workspace cursors
+            if (toolName === 'hand') {
+                canvasContainer.classList.add('cursor-grab');
+            } else {
+                canvasContainer.classList.remove('cursor-grab', 'cursor-grabbing');
+            }
+
+            // 【優化 3】工具切換時更新 Slider UI 以套用獨立粗細
+            updateSliderUI();
+
+            // Banner Instructions for Crop
+            if (toolName === 'crop') {
+                showInteractionBanner("請在畫布上拉出想要擷圖剪取的範圍，放開即可複製。");
+            }
+
+            // De-select lasso highlights if not in lasso
+            if (toolName !== 'lasso') {
+                selectedLassoObjects = [];
+                lassoMenu.classList.add('hidden');
+                pasteMenu.classList.add('hidden');
+                redrawWorkspace();
+            }
+        }
+
+        function showInteractionBanner(message) {
+            interactionBannerText.textContent = message;
+            interactionBanner.classList.remove('hidden');
+        }
+
+        function hideInteractionBanner() {
+            interactionBanner.classList.add('hidden');
+        }
+
+        // TOOLBAR DRAGGING & FOLDING
+        function setupToolbarDragging() {
+            let isDraggingToolbar = false;
+            let offsetLeft = 0, offsetTop = 0;
+
+            dragHandle.addEventListener('mousedown', (e) => {
+                isDraggingToolbar = true;
+                offsetLeft = e.clientX - floatingToolbar.offsetLeft;
+                offsetTop = e.clientY - floatingToolbar.offsetTop;
+                dragHandle.classList.remove('cursor-grab');
+                dragHandle.classList.add('cursor-grabbing');
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (isDraggingToolbar) {
+                    let left = e.clientX - offsetLeft;
+                    let top = e.clientY - offsetTop;
+                    
+                    left = Math.max(10, Math.min(window.innerWidth - floatingToolbar.offsetWidth - 10, left));
+                    top = Math.max(10, Math.min(window.innerHeight - floatingToolbar.offsetHeight - 10, top));
+
+                    floatingToolbar.style.left = left + 'px';
+                    floatingToolbar.style.top = top + 'px';
+                }
+            });
+
+            document.addEventListener('mouseup', () => {
+                isDraggingToolbar = false;
+                dragHandle.classList.remove('cursor-grabbing');
+                dragHandle.classList.add('cursor-grab');
+            });
+
+            // Touch screen dragging fallback for ipad
+            dragHandle.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 1) {
+                    const t = e.touches[0];
+                    isDraggingToolbar = true;
+                    offsetLeft = t.clientX - floatingToolbar.offsetLeft;
+                    offsetTop = t.clientY - floatingToolbar.offsetTop;
+                }
+            });
+
+            dragHandle.addEventListener('touchmove', (e) => {
+                if (isDraggingToolbar && e.touches.length === 1) {
+                    const t = e.touches[0];
+                    let left = t.clientX - offsetLeft;
+                    let top = t.clientY - offsetTop;
+                    left = Math.max(10, Math.min(window.innerWidth - floatingToolbar.offsetWidth - 10, left));
+                    top = Math.max(10, Math.min(window.innerHeight - floatingToolbar.offsetHeight - 10, top));
+                    floatingToolbar.style.left = left + 'px';
+                    floatingToolbar.style.top = top + 'px';
+                }
+            });
+
+            dragHandle.addEventListener('touchend', () => {
+                isDraggingToolbar = false;
+            });
+
+            // Collapsing layout folding
+            let isCollapsed = false;
+            collapseBtn.addEventListener('click', () => {
+                isCollapsed = !isCollapsed;
+                if (isCollapsed) {
+                    toolbarContent.classList.add('hidden');
+                    collapseIcon.setAttribute('data-lucide', 'chevrons-right');
+                    floatingToolbar.style.width = '50px';
+                } else {
+                    toolbarContent.classList.remove('hidden');
+                    collapseIcon.setAttribute('data-lucide', 'chevrons-left');
+                    floatingToolbar.style.width = 'auto';
+                }
+                lucide.createIcons();
+            });
+        }
+
+        // FILE IMPORTS: PDFS
+        function setupPdfLoading() {
+            const pdfFileInput = document.getElementById('pdf-file-input');
+            document.getElementById('import-pdf-btn').addEventListener('click', () => {
+                pdfFileInput.click();
+            });
+
+            pdfFileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = function () {
+                    const classId = state.currentClassId;
+                    if (!state.tabs[classId]) state.tabs[classId] = [];
+
+                    const newTab = {
+                        id: 'tab-pdf-' + Date.now(),
+                        title: file.name.substring(0, 15) + (file.name.length > 15 ? '...' : ''),
+                        type: 'pdf',
+                        pdfData: reader.result,
+                        currentPage: 1,
+                        totalPages: 1,
+                        hasSideGrid: false
+                    };
+
+                    const loadingTask = pdfjsLib.getDocument({ data: atob(reader.result.split(',')[1]) });
+                    loadingTask.promise.then(pdf => {
+                        newTab.totalPages = pdf.numPages;
+                        
+                        // Immediately pre-cache PDF document instance for flawless instant rendering
+                        loadedPdfDocs[newTab.id] = pdf;
+
+                        state.tabs[classId].push(newTab);
+                        state.currentTabId[classId] = newTab.id;
+                        renderTabs();
+                        showToast(`成功導入 PDF: ${pdf.numPages} 頁`);
+                    }).catch(err => {
+                        console.error(err);
+                        showToast("解析 PDF 失敗！");
+                    });
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        // FILE IMPORTS: IMAGES
+        function setupImageLoading() {
+            const imageInput = document.getElementById('image-file-input');
+            document.getElementById('tool-image').addEventListener('click', () => {
+                imageInput.click();
+            });
+
+            imageInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = function() {
+                    const classId = state.currentClassId;
+                    const activeTabId = state.currentTabId[classId];
+                    if (!activeTabId) return;
+
+                    const activeTab = state.tabs[classId].find(t => t.id === activeTabId);
+                    const key = `${classId}_${activeTabId}_${activeTab.currentPage}`;
+
+                    pushUndoState();
+                    if (!state.drawings[key]) state.drawings[key] = [];
+                    
+                    const tempImg = new Image();
+                    tempImg.src = reader.result;
+                    tempImg.onload = () => {
+                        const maxW = 300;
+                        const factor = tempImg.width > maxW ? maxW / tempImg.width : 1;
+
+                        state.drawings[key].push({
+                            id: 'image-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
+                            type: 'image',
+                            dataUrl: reader.result,
+                            x: drawingCanvas.width / 4,
+                            y: drawingCanvas.height / 4,
+                            width: tempImg.width * factor,
+                            height: tempImg.height * factor,
+                            angle: 0
+                        });
+
+                        saveState();
+                        redrawWorkspace();
+                        showToast("已成功插入照片");
+                    };
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        // LASSO TOOL SELECTOR MECHANICS
+        let lassoActive = false;
+        let lassoPolygon = [];
+        let selectedLassoObjects = [];
+        let lassoTransformMode = null; // 'move', 'scale', 'rotate'
+        let transformSnapshot = [];
+        let transformCenter = { x: 0, y: 0 };
+        let transformStartPt = { x: 0, y: 0 };
+        let transformStartDist = 0;
+        let transformStartAngle = 0;
+
+        // 綁定套索的操作互動 (複製、剪下、指定貼上)
+        function setupLassoInteractions() {
+            document.getElementById('lasso-copy').addEventListener('click', copyLassoSelection);
+            document.getElementById('lasso-cut').addEventListener('click', cutLassoSelection);
+            document.getElementById('lasso-delete').addEventListener('click', deleteLassoSelection);
+            
+            // 綁定點擊貼上的觸發，不論是工具列還是選單，統一呼叫 armClickToPaste
+            document.getElementById('lasso-trigger-paste').addEventListener('click', armClickToPaste);
+            document.getElementById('lasso-paste').addEventListener('click', armClickToPaste);
+            document.getElementById('tool-paste').addEventListener('click', armClickToPaste);
+        }
+
+        function startLasso(pt, e) {
+            const cb = getCollectiveBoundingBox(selectedLassoObjects);
+
+            if (cb) {
+                const distScale = Math.hypot(pt.x - (cb.maxX + 6), pt.y - (cb.maxY + 6));
+                if (distScale < 18) {
+                    lassoTransformMode = 'scale';
+                    initTransformData(pt, cb);
+                    return;
+                }
+
+                const midX = (cb.minX + cb.maxX) / 2;
+                const distRotate = Math.hypot(pt.x - midX, pt.y - (cb.minY - 24));
+                if (distRotate < 18) {
+                    lassoTransformMode = 'rotate';
+                    initTransformData(pt, cb);
+                    return;
+                }
+
+                if (pt.x >= cb.minX - 6 && pt.x <= cb.maxX + 6 && pt.y >= cb.minY - 6 && pt.y <= cb.maxY + 6) {
+                    lassoTransformMode = 'move';
+                    initTransformData(pt, cb);
+                    return;
+                }
+            }
+
+            lassoActive = true;
+            lassoPolygon = [pt];
+            selectedLassoObjects = [];
+            lassoTransformMode = null;
+            lassoMenu.classList.add('hidden');
+            pasteMenu.classList.add('hidden');
+        }
+
+        function initTransformData(pt, cb) {
+            pushUndoState(); // Store snapshot to Undo stack on drag start
+            transformSnapshot = JSON.parse(JSON.stringify(selectedLassoObjects));
+            transformCenter = {
+                x: (cb.minX + cb.maxX) / 2,
+                y: (cb.minY + cb.maxY) / 2
+            };
+            transformStartPt = pt;
+            transformStartDist = Math.hypot(pt.x - transformCenter.x, pt.y - transformCenter.y);
+            transformStartAngle = Math.atan2(pt.y - transformCenter.y, pt.x - transformCenter.x);
+            lassoMenu.classList.add('hidden');
+            pasteMenu.classList.add('hidden');
+        }
+
+        function dragLasso(pt, e) {
+            if (lassoActive) {
+                lassoPolygon.push(pt);
+                redrawWorkspace();
+            } else if (lassoTransformMode) {
+                if (lassoTransformMode === 'scale') {
+                    const currentDist = Math.hypot(pt.x - transformCenter.x, pt.y - transformCenter.y);
+                    const s = transformStartDist > 0 ? currentDist / transformStartDist : 1;
+
+                    selectedLassoObjects.forEach((obj, idx) => {
+                        const snap = transformSnapshot[idx];
+                        if (obj.type === 'stroke') {
+                            obj.points = snap.points.map(p => ({
+                                x: transformCenter.x + (p.x - transformCenter.x) * s,
+                                y: transformCenter.y + (p.y - transformCenter.y) * s
+                            }));
+                            obj.size = Math.max(1, snap.size * s);
+                        } else if (obj.type === 'stamp') {
+                            obj.x = transformCenter.x + (snap.x - transformCenter.x) * s;
+                            obj.y = transformCenter.y + (snap.y - transformCenter.y) * s;
+                            obj.scaleSize = Math.max(15, snap.scaleSize * s);
+                        } else if (obj.type === 'image') {
+                            obj.x = transformCenter.x + (snap.x - transformCenter.x) * s;
+                            obj.y = transformCenter.y + (snap.y - transformCenter.y) * s;
+                            obj.width = Math.max(15, snap.width * s);
+                            obj.height = Math.max(15, snap.height * s);
+                        }
+                    });
+                } else if (lassoTransformMode === 'rotate') {
+                    const currentAngle = Math.atan2(pt.y - transformCenter.y, pt.x - transformCenter.x);
+                    const dAngle = currentAngle - transformStartAngle;
+                    const cos = Math.cos(dAngle);
+                    const sin = Math.sin(dAngle);
+
+                    const rotatePoint = (px, py) => {
+                        const dx = px - transformCenter.x;
+                        const dy = py - transformCenter.y;
+                        return {
+                            x: transformCenter.x + dx * cos - dy * sin,
+                            y: targetCtx = ctx ? transformCenter.y + dx * sin + dy * cos : transformCenter.y + dx * sin + dy * cos
+                        };
+                    };
+
+                    selectedLassoObjects.forEach((obj, idx) => {
+                        const snap = transformSnapshot[idx];
+                        if (obj.type === 'stroke') {
+                            obj.points = snap.points.map(p => rotatePoint(p.x, p.y));
+                        } else if (obj.type === 'stamp') {
+                            const rot = rotatePoint(snap.x, snap.y);
+                            obj.x = rot.x;
+                            obj.y = rot.y;
+                            obj.angle = (snap.angle || 0) + dAngle;
+                        } else if (obj.type === 'image') {
+                            const imgCenter = { x: snap.x + snap.width / 2, y: snap.y + snap.height / 2 };
+                            const rot = rotatePoint(imgCenter.x, imgCenter.y);
+                            obj.x = rot.x - obj.width / 2;
+                            obj.y = rot.y - obj.height / 2;
+                            obj.angle = (snap.angle || 0) + dAngle;
+                        }
+                    });
+                } else if (lassoTransformMode === 'move') {
+                    const dx = pt.x - transformStartPt.x;
+                    const dy = pt.y - transformStartPt.y;
+
+                    selectedLassoObjects.forEach((obj, idx) => {
+                        const snap = transformSnapshot[idx];
+                        if (obj.type === 'stroke') {
+                            obj.points = snap.points.map(p => ({ x: p.x + dx, y: p.y + dy }));
+                        } else if (obj.type === 'stamp' || obj.type === 'image') {
+                            obj.x = snap.x + dx;
+                            obj.y = snap.y + dy;
+                        }
+                    });
+                }
+                redrawWorkspace();
+            }
+        }
+
+        // End of lasso dragging
+        function endLasso() {
+            if (lassoActive) {
+                lassoActive = false;
+                detectObjectsInsideLasso();
+                lassoPolygon = [];
+                redrawWorkspace();
+            } else if (lassoTransformMode) {
+                lassoTransformMode = null;
+                transformSnapshot = [];
+                saveState();
+                showLassoMenu();
+            }
+        }
+
+        // Raycasting algorithm to detect elements inside lasso drawn polygon
+        function isPointInPolygon(point, polygon) {
+            let x = point.x, y = point.y;
+            let inside = false;
+            for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+                let xi = polygon[i].x, yi = polygon[i].y;
+                let xj = polygon[j].x, yj = polygon[j].y;
+                let intersect = ((yi > y) !== (yj > y))
+                    && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+                if (intersect) inside = !inside;
+            }
+            return inside;
+        }
+
+        function detectObjectsInsideLasso() {
+            if (lassoPolygon.length < 3) return;
+
+            const classId = state.currentClassId;
+            const activeTabId = state.currentTabId[classId];
+            const activeTab = state.tabs[classId].find(t => t.id === activeTabId);
+            const key = `${classId}_${activeTabId}_${activeTab.currentPage}`;
+            const objects = state.drawings[key] || [];
+
+            selectedLassoObjects = objects.filter(obj => {
+                const bounds = getObjectBoundingBox(obj);
+                const center = {
+                    x: (bounds.minX + bounds.maxX) / 2,
+                    y: (bounds.minY + bounds.maxY) / 2
+                };
+                return isPointInPolygon(center, lassoPolygon);
+            });
+
+            if (selectedLassoObjects.length > 0) {
+                showLassoMenu();
+            } else {
+                if (state.clipboard) {
+                    showPasteMenu();
+                }
+            }
+        }
+
+        function showLassoMenu() {
+            if (selectedLassoObjects.length === 0) return;
+            const b = getCollectiveBoundingBox(selectedLassoObjects);
+            if (!b) return;
+            
+            // Map virtual coords to client viewport coordinates
+            const rect = drawingCanvas.getBoundingClientRect();
+            const scaleX = rect.width / drawingCanvas.width;
+            const scaleY = rect.height / drawingCanvas.height;
+
+            const clientX = b.minX * scaleX + rect.left;
+            const clientY = b.minY * scaleY + rect.top - 50;
+
+            lassoMenu.style.left = Math.max(10, Math.min(window.innerWidth - 200, clientX)) + 'px';
+            lassoMenu.style.top = Math.max(60, clientY) + 'px';
+            lassoMenu.classList.remove('hidden');
+        }
+
+        function showPasteMenu() {
+            const rect = drawingCanvas.getBoundingClientRect();
+            pasteMenu.style.left = (window.innerWidth / 2 - 50) + 'px';
+            pasteMenu.style.top = (window.innerHeight / 2 - 20) + 'px';
+            pasteMenu.classList.remove('hidden');
+        }
+
+        // CLIPBOARD OPERATIONS
+        function copyLassoSelection() {
+            if (selectedLassoObjects.length === 0) return;
+            state.clipboard = JSON.parse(JSON.stringify(selectedLassoObjects));
+            showToast(`已成功複製圈選之 ${selectedLassoObjects.length} 個物件！點選工具列的『貼上』並在想要的地方點擊即可貼上。`);
+            lassoMenu.classList.add('hidden');
+        }
+
+        // 剪下套索選取的物件
+        function cutLassoSelection() {
+            if (selectedLassoObjects.length === 0) return;
+            state.clipboard = JSON.parse(JSON.stringify(selectedLassoObjects));
+            deleteLassoSelection();
+            showToast(`已成功剪下 ${state.clipboard.length} 個物件！點選工具列的『貼上』並在想要的地方點擊即可貼上。`);
+            lassoMenu.classList.add('hidden');
+        }
+
+        function deleteLassoSelection() {
+            if (selectedLassoObjects.length === 0) return;
+            pushUndoState();
+
+            const classId = state.currentClassId;
+            const activeTabId = state.currentTabId[classId];
+            const activeTab = state.tabs[classId].find(t => t.id === activeTabId);
+            const key = `${classId}_${activeTabId}_${activeTab.currentPage}`;
+
+            state.drawings[key] = state.drawings[key].filter(obj => !selectedLassoObjects.includes(obj));
+            selectedLassoObjects = [];
+            lassoMenu.classList.add('hidden');
+            saveState();
+            redrawWorkspace();
+        }
+
+        // 啟動指定點擊貼上模式
+        function armClickToPaste() {
+            if (!state.clipboard || state.clipboard.length === 0) {
+                showToast("剪貼簿目前沒有內容！請先進行圈選複製、剪下或擷圖。");
+                return;
+            }
+            state.pendingPasteClick = true;
+            lassoMenu.classList.add('hidden');
+            pasteMenu.classList.add('hidden');
+            
+            // 自動切換到套索工具以便操作
+            setActiveTool('lasso', 'tool-lasso');
+            showInteractionBanner("請在畫布任意位置點擊，即可在該點貼上複製的內容。");
+        }
+
+        // 執行在指定點選位置貼上
+        function executeDesignatedPaste(pt) {
+            state.pendingPasteClick = false;
+            hideInteractionBanner();
+
+            const classId = state.currentClassId;
+            const activeTabId = state.currentTabId[classId];
+            const activeTab = state.tabs[classId].find(t => t.id === activeTabId);
+            const key = `${classId}_${activeTabId}_${activeTab.currentPage}`;
+
+            pushUndoState();
+            if (!state.drawings[key]) state.drawings[key] = [];
+
+            // 計算剪貼簿中所有物件的聯合邊界框中心
+            const cb = getCollectiveBoundingBox(state.clipboard);
+            if (!cb) {
+                showToast("貼上失敗：貼上對象的範圍不合法。");
+                return;
+            }
+
+            const clipCenter = {
+                x: (cb.minX + cb.maxX) / 2,
+                y: (cb.minY + cb.maxY) / 2
+            };
+
+            // 計算目標點與中心的 delta 偏移量
+            const dx = pt.x - clipCenter.x;
+            const dy = pt.y - clipCenter.y;
+
+            // 生成偏移後的物件複本
+            const pastedCopies = state.clipboard.map(obj => {
+                const copy = JSON.parse(JSON.stringify(obj));
+                copy.id = (copy.type) + '-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+                
+                if (copy.type === 'stroke') {
+                    copy.points = copy.points.map(p => ({ x: p.x + dx, y: p.y + dy }));
+                } else if (copy.type === 'stamp' || copy.type === 'image') {
+                    copy.x += dx;
+                    copy.y += dy;
+                }
+                return copy;
+            });
+
+            // 加到畫布繪圖陣列中
+            pastedCopies.forEach(c => state.drawings[key].push(c));
+            
+            // 自動圈選貼上的物件，方便立即微調縮放旋轉
+            selectedLassoObjects = pastedCopies; 
+
+            saveState();
+            redrawWorkspace();
+            showLassoMenu(); // 在新貼上的物件旁顯示套索功能選單
+            showToast(`已成功貼上 ${pastedCopies.length} 個物件！`);
+        }
+
+        // 剪裁擷圖處理程序
+        async function executeCropCapture() {
+            hideInteractionBanner();
+            if (!cropStartPt || !cropCurrentPt) return;
+
+            const left = Math.min(cropStartPt.x, cropCurrentPt.x);
+            const top = Math.min(cropStartPt.y, cropCurrentPt.y);
+            const width = Math.abs(cropStartPt.x - cropCurrentPt.x);
+            const height = Math.abs(cropStartPt.y - cropCurrentPt.y);
+
+            // Cancel if area is tiny
+            if (width < 10 || height < 10) {
+                showToast("擷選區域過小，已取消剪裁。");
+                redrawWorkspace();
+                return;
+            }
+
+            const classId = state.currentClassId;
+            const activeTabId = state.currentTabId[classId];
+            if (!activeTabId) return;
+            const activeTab = state.tabs[classId].find(t => t.id === activeTabId);
+
+            // 1. 建立背景獨立的 Canvas 渲染器
+            const snapshotCanvas = document.createElement('canvas');
+            snapshotCanvas.width = drawingCanvas.width;
+            snapshotCanvas.height = drawingCanvas.height;
+            const sCtx = snapshotCanvas.getContext('2d');
+
+            // 2. 繪製乾淨的底圖，完全排除擷取框與套索變形框
+            if (activeTab.type === 'pdf') {
+                sCtx.drawImage(pdfCanvas, 0, 0);
+            } else {
+                sCtx.fillStyle = '#fcfcfc';
+                sCtx.fillRect(0, 0, snapshotCanvas.width, snapshotCanvas.height);
+                
+                sCtx.strokeStyle = 'rgba(200, 200, 200, 0.2)';
+                sCtx.lineWidth = 1;
+                const gridSize = 40;
+                for (let x = 0; x < snapshotCanvas.width; x += gridSize) {
+                    sCtx.beginPath();
+                    sCtx.moveTo(x, 0);
+                    sCtx.lineTo(x, snapshotCanvas.height);
+                    sCtx.stroke();
+                }
+                for (let y = 0; y < snapshotCanvas.height; y += gridSize) {
+                    sCtx.beginPath();
+                    sCtx.moveTo(0, y);
+                    sCtx.lineTo(snapshotCanvas.width, y);
+                    sCtx.stroke();
+                }
+            }
+
+            // 3. 只繪製純淨的手寫、印章與圖片物件
+            const key = `${classId}_${activeTabId}_${activeTab.currentPage}`;
+            const objects = state.drawings[key] || [];
+            objects.forEach(obj => {
+                if (obj.type === 'stroke') {
+                    drawStroke(obj, sCtx);
+                } else if (obj.type === 'stamp') {
+                    drawChemicalStamp(obj, sCtx);
+                } else if (obj.type === 'image') {
+                    drawImageObject(obj, sCtx);
+                }
+            });
+
+            // 4. 裁剪該矩形區域
+            const croppedCanvas = document.createElement('canvas');
+            croppedCanvas.width = width;
+            croppedCanvas.height = height;
+            const cCtx = croppedCanvas.getContext('2d');
+            cCtx.drawImage(snapshotCanvas, left, top, width, height, 0, 0, width, height);
+
+            // 5. 存入全域剪貼簿
+            const croppedDataUrl = croppedCanvas.toDataURL('image/png');
+            state.clipboard = [{
+                id: 'image-' + Date.now(),
+                type: 'image',
+                dataUrl: croppedDataUrl,
+                x: 0,
+                y: 0,
+                width: width,
+                height: height,
+                angle: 0
+            }];
+
+            showToast("畫面裁剪擷圖複製完成！您可以點選工具列的『貼上』並在想要的位置點擊貼上。");
+            
+            // 恢復白板渲染並重新繪製
+            redrawWorkspace();
+        }
+
+        // SIDE-BY-SIDE GRID PAPER INTERACTION MANAGER
+        function setupSideGridInteractions() {
+            toggleSideGridBtn.addEventListener('click', () => {
+                const classId = state.currentClassId;
+                const activeTabId = state.currentTabId[classId];
+                if (!activeTabId) return;
+                
+                const activeTab = state.tabs[classId].find(t => t.id === activeTabId);
+                if (activeTab && activeTab.type === 'pdf') {
+                    pushUndoState();
+                    activeTab.hasSideGrid = !activeTab.hasSideGrid;
+                    saveState();
+                    loadActiveTabContent();
+                    showToast(activeTab.hasSideGrid ? "已開啟右側並排方格對照區！您現在可以一邊看講義一邊寫筆記。" : "並排方格紙已關閉。");
+                }
+            });
+        }
+
+        // PNG EXPORTS FOR STUDENTS
+        document.getElementById('export-png-btn').addEventListener('click', () => {
+            const classId = state.currentClassId;
+            const activeTabId = state.currentTabId[classId];
+            if (!activeTabId) return;
+
+            const tabs = state.tabs[classId] || [];
+            const activeTab = tabs.find(t => t.id === activeTabId);
+
+            const exportCanvas = document.createElement('canvas');
+            exportCanvas.width = drawingCanvas.width;
+            exportCanvas.height = drawingCanvas.height;
+            const eCtx = exportCanvas.getContext('2d');
+
+            if (activeTab.type === 'pdf') {
+                eCtx.drawImage(pdfCanvas, 0, 0);
+                
+                // If has side-by-side grid, manually render grid lines for the side write paper inside export
+                if (activeTab.hasSideGrid) {
+                    const sideGridWidth = 800;
+                    const pdfWidth = pdfCanvas.width;
+                    
+                    eCtx.fillStyle = '#fcfcfc';
+                    eCtx.fillRect(pdfWidth, 0, sideGridWidth, exportCanvas.height);
+                    
+                    eCtx.strokeStyle = 'rgba(200, 200, 200, 0.2)';
+                    eCtx.lineWidth = 1;
+                    const gridSize = 40;
+                    for (let x = pdfWidth; x < exportCanvas.width; x += gridSize) {
+                        eCtx.beginPath();
+                        eCtx.moveTo(x, 0);
+                        eCtx.lineTo(x, exportCanvas.height);
+                        eCtx.stroke();
+                    }
+                    for (let y = 0; y < exportCanvas.height; y += gridSize) {
+                        eCtx.beginPath();
+                        eCtx.moveTo(pdfWidth, y);
+                        eCtx.lineTo(exportCanvas.width, y);
+                        eCtx.stroke();
+                    }
+                    
+                    // Separator bold line
+                    eCtx.strokeStyle = '#cbd5e1';
+                    eCtx.lineWidth = 3;
+                    eCtx.beginPath();
+                    eCtx.moveTo(pdfWidth, 0);
+                    eCtx.lineTo(pdfWidth, exportCanvas.height);
+                    eCtx.stroke();
+                }
+            } else {
+                eCtx.fillStyle = '#fcfcfc';
+                eCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+                
+                eCtx.strokeStyle = 'rgba(200, 200, 200, 0.2)';
+                eCtx.lineWidth = 1;
+                const gridSize = 40;
+                for (let x = 0; x < exportCanvas.width; x += gridSize) {
+                    eCtx.beginPath();
+                    eCtx.moveTo(x, 0);
+                    eCtx.lineTo(x, exportCanvas.height);
+                    eCtx.stroke();
+                }
+                for (let y = 0; y < exportCanvas.height; y += gridSize) {
+                    eCtx.beginPath();
+                    eCtx.moveTo(0, y);
+                    eCtx.lineTo(exportCanvas.width, y);
+                    eCtx.stroke();
+                }
+            }
+
+            eCtx.drawImage(drawingCanvas, 0, 0);
+
+            const link = document.createElement('a');
+            link.download = `${classSelect.options[classSelect.selectedIndex].text}_${activeTab.title}_頁碼${activeTab.currentPage}.png`;
+            link.href = exportCanvas.toDataURL('image/png');
+            link.click();
+            showToast("PNG 圖檔導出成功！已包含完整的講義與右側書寫筆記。");
+        });
+
+        // CLASS SETTINGS MODAL MECHANICS
+        const classModal = document.getElementById('class-modal');
+        const classListContainer = document.getElementById('class-list-container');
+        const newClassInput = document.getElementById('new-class-input');
+
+        function setupClassModal() {
+            document.getElementById('add-class-btn').addEventListener('click', openClassModal);
+            document.getElementById('edit-class-btn').addEventListener('click', openClassModal);
+            document.getElementById('close-modal-btn').addEventListener('click', () => classModal.classList.add('hidden'));
+
+            document.getElementById('modal-add-class-btn').addEventListener('click', () => {
+                const name = newClassInput.value.trim();
+                if (!name) return;
+
+                const newClass = {
+                    id: 'class-' + Date.now(),
+                    name: name
+                };
+                state.classes.push(newClass);
+                newClassInput.value = '';
+                
+                renderClassSelect();
+                renderModalClassList();
+                saveState();
+                showToast(`已新增 ${name}`);
+            });
+        }
+
+        function openClassModal() {
+            classModal.classList.remove('hidden');
+            renderModalClassList();
+        }
+
+        function renderModalClassList() {
+            classListContainer.innerHTML = '';
+            state.classes.forEach(c => {
+                const div = document.createElement('div');
+                div.className = 'flex items-center justify-between p-2 bg-white rounded-lg border border-slate-200 shadow-xs mb-1';
+
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'font-semibold text-slate-700 text-sm';
+                nameSpan.textContent = c.name;
+                div.appendChild(nameSpan);
+
+                const actions = document.createElement('div');
+                actions.className = 'flex items-center space-x-1';
+
+                // Rename Button
+                const renBtn = document.createElement('button');
+                renBtn.className = 'p-1 text-slate-400 hover:text-indigo-600 rounded transition';
+                renBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>';
+                renBtn.addEventListener('click', () => {
+                    const newName = prompt("請輸入新的班級名稱:", c.name);
+                    if (newName && newName.trim()) {
+                        c.name = newName.trim();
+                        renderClassSelect();
+                        renderModalClassList();
+                        saveState();
+                        showToast("名稱已變更");
+                    }
+                });
+                actions.appendChild(renBtn);
+
+                // Delete Button
+                const delBtn = document.createElement('button');
+                delBtn.className = 'p-1 text-slate-400 hover:text-red-600 rounded transition';
+                delBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
+                delBtn.addEventListener('click', () => {
+                    if (state.classes.length <= 1) {
+                        showToast("必須保留至少一個班級");
+                        return;
+                    }
+                    if (confirm(`確定要刪除班級「${c.name}」嗎？所有內容都將抹除且無法還原！`)) {
+                        state.classes = state.classes.filter(item => item.id !== c.id);
+                        delete state.tabs[c.id];
+                        delete state.currentTabId[c.id];
+
+                        if (state.currentClassId === c.id) {
+                            state.currentClassId = state.classes[0].id;
+                        }
+
+                        renderClassSelect();
+                        renderModalClassList();
+                        switchClass(state.currentClassId);
+                        saveState();
+                        showToast("班級已刪除");
+                    }
+                });
+                actions.appendChild(delBtn);
+
+                div.appendChild(actions);
+                classListContainer.appendChild(div);
+            });
+        }
+    </script>
+</body>
+</html>
